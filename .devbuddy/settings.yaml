@@ -1,0 +1,106 @@
+schema_version: 1
+settings_version: 0.4.5
+workspace:
+  projects:
+    factorio-server-management:
+      path: .
+memory_root: knowledge-base
+tools:
+  is_rtk: false
+orchestration:
+  max_concurrency: 2
+  task_timeout_seconds: 900
+  retry_limit: 1
+  adapter_profiles: [claude, codex]
+  approved_models:
+    - id: claude-haiku-4.5
+      adapters: [claude]
+      rank: 1
+      allowed_roles: [ba-pm, ux-ui, developer, qa, reviewer, devops-sre, dba-data]
+      allowed_risks: [low, medium]
+    - id: claude-sonnet-5
+      adapters: [claude]
+      rank: 2
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [low, medium, high]
+    - id: claude-opus-5
+      adapters: [claude]
+      rank: 3
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [high, critical]
+    - id: claude-fable
+      adapters: [claude]
+      rank: 4
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [critical]
+    - id: gpt-5.6-luna
+      adapters: [codex]
+      rank: 1
+      allowed_roles: [ba-pm, ux-ui, developer, qa, reviewer, devops-sre, dba-data]
+      allowed_risks: [low, medium]
+    - id: gpt-5.6-terra
+      adapters: [codex]
+      rank: 2
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [low, medium, high]
+    - id: gpt-5.6-sol
+      adapters: [codex]
+      rank: 3
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [high, critical]
+  approved_effort_levels:
+    - id: low
+      adapters: [claude]
+      rank: 1
+      allowed_roles: [ba-pm, ux-ui, developer, qa, reviewer, devops-sre, dba-data]
+      allowed_risks: [low]
+    - id: medium
+      adapters: [claude]
+      rank: 2
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [low, medium]
+    - id: high
+      adapters: [claude]
+      rank: 3
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [low, medium, high]
+    - id: extra
+      adapters: [claude]
+      rank: 4
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [high, critical]
+    - id: max
+      adapters: [claude]
+      rank: 5
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [high, critical]
+    - id: ultracode
+      adapters: [claude]
+      rank: 6
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [critical]
+    - id: light
+      adapters: [codex]
+      rank: 1
+      allowed_roles: [ba-pm, ux-ui, developer, qa, reviewer, devops-sre, dba-data]
+      allowed_risks: [low]
+    - id: medium
+      adapters: [codex]
+      rank: 2
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [low, medium]
+    - id: high
+      adapters: [codex]
+      rank: 3
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [low, medium, high]
+    - id: extra-high
+      adapters: [codex]
+      rank: 4
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [high, critical]
+    - id: ultra
+      adapters: [codex]
+      rank: 5
+      allowed_roles: [ba-pm, ux-ui, architect, developer, qa, security, devops-sre, dba-data, reviewer]
+      allowed_risks: [high, critical]
