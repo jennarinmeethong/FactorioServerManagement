@@ -314,6 +314,8 @@ FakesAssemblies/
 # Node.js Tools for Visual Studio
 .ntvs_analysis.dat
 node_modules/
+data/
+src/FactorioManager.Api/wwwroot/
 
 # Visual Studio 6 build log
 *.plg

@@ -1,0 +1,11 @@
+services:
+  factorio-manager:
+    build: .
+    image: factorio-server-manager:local
+    container_name: factorio-manager
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "34197:34197/udp"
+    volumes:
+      - ./data:/data

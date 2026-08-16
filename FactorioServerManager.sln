@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FactorioManager.Api", "src\FactorioManager.Api\FactorioManager.Api.csproj", "{FE5AA197-8145-4099-983A-0B46945F296A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FactorioManager.Api.Tests", "tests\FactorioManager.Api.Tests\FactorioManager.Api.Tests.csproj", "{A1A05BF0-113B-4740-9A22-BB6884CD7C4B}"
+EndProject
+Global
+  GlobalSection(SolutionConfigurationPlatforms) = preSolution
+    Debug|Any CPU = Debug|Any CPU
+    Release|Any CPU = Release|Any CPU
+  EndGlobalSection
+  GlobalSection(ProjectConfigurationPlatforms) = postSolution
+    {FE5AA197-8145-4099-983A-0B46945F296A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {FE5AA197-8145-4099-983A-0B46945F296A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {FE5AA197-8145-4099-983A-0B46945F296A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {FE5AA197-8145-4099-983A-0B46945F296A}.Release|Any CPU.Build.0 = Release|Any CPU
+    {A1A05BF0-113B-4740-9A22-BB6884CD7C4B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+    {A1A05BF0-113B-4740-9A22-BB6884CD7C4B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+    {A1A05BF0-113B-4740-9A22-BB6884CD7C4B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+    {A1A05BF0-113B-4740-9A22-BB6884CD7C4B}.Release|Any CPU.Build.0 = Release|Any CPU
+  EndGlobalSection
+EndGlobal

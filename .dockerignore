@@ -1,0 +1,7 @@
+.git
+.devbuddy
+**/bin
+**/obj
+**/node_modules
+data
+src/FactorioManager.Api/wwwroot
