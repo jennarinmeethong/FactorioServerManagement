@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "map-settings-qa-1",
+  "attempt": 1,
+  "parent_revision": 6,
+  "role": "qa",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "QA completed with rtk_required=false. Backend and frontend builds pass; map-generation settings are persisted, validated, converted to Factorio map-gen-settings JSON, and passed via --map-gen-settings. UI covers terrain, resources, enemy bases, evolution, expansion, and cliffs with Thai descriptions. Minor follow-up gaps remain in some individual control descriptions and automated coverage.",
+  "evidence": [
+    { "ref": "dotnet test --no-restore", "outcome": "Passed 2/2 tests." },
+    { "ref": "bun run --cwd src/FactorioManager.Web build", "outcome": "TypeScript and Vite production build passed; only existing Rollup annotation warnings." },
+    { "ref": "src/FactorioManager.Api/Domain.cs, Program.cs, ServerSupervisor.cs, src/FactorioManager.Web/src/App.tsx", "outcome": "Validated defaults, API validation, map-gen-settings generation, --map-gen-settings integration, and Thai UI controls." }
+  ],
+  "next_slice": {
+    "summary": "Add focused automated tests for map settings validation and generated JSON; improve descriptions for every individual expansion/cliff control and omit null seed from generated JSON if Factorio rejects null.",
+    "read_paths": ["factorio-server-management:src/FactorioManager.Api/Program.cs", "factorio-server-management:src/FactorioManager.Api/ServerSupervisor.cs", "factorio-server-management:src/FactorioManager.Web/src/App.tsx", "factorio-server-management:tests/FactorioManager.Api.Tests"],
+    "read_keys": []
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": ["No automated test currently verifies invalid map values are rejected or exact generated JSON/cooldown ticks.", "Some individual controls lack their own detailed descriptions despite the requested detail.", "Generated JSON serializes seed:null; verify Factorio accepts this or omit seed when unset."],
+  "required_approval": null
+}

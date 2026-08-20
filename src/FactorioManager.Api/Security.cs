@@ -38,4 +38,11 @@ public sealed class SetupCodeService(StateStore state)
         var hash = await state.GetAsync<string>("admin_password", cancellationToken);
         return hash is not null && BCrypt.Net.BCrypt.Verify(password, hash);
     }
+
+    public async Task<bool> ChangePasswordAsync(string currentPassword, string newPassword, CancellationToken cancellationToken = default)
+    {
+        if (newPassword.Length < 12 || !await VerifyPasswordAsync(currentPassword, cancellationToken)) return false;
+        await state.SetAsync("admin_password", BCrypt.Net.BCrypt.HashPassword(newPassword), cancellationToken);
+        return true;
+    }
 }

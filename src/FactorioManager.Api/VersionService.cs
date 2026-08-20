@@ -101,7 +101,9 @@ public sealed class VersionService(
             throw new InvalidOperationException("Download the selected Factorio version before applying it.");
         var oldSettings = await store.GetAsync<ServerSettings>("settings", cancellationToken) ?? new ServerSettings();
         var wasRunning = (await supervisor.GetStatusAsync()).State == ServerState.Running;
-        if (wasRunning) await backups.CreateBackupAsync("pre-update", cancellationToken);
+        // Always create a recovery point before changing the active binary. If a save is selected,
+        // refusing to continue when it cannot be backed up is safer than applying a version blindly.
+        if (!string.IsNullOrWhiteSpace(oldSettings.ActiveSave)) await backups.CreateBackupAsync("pre-update", cancellationToken);
         if (wasRunning) await supervisor.StopAsync(cancellationToken);
         try
         {

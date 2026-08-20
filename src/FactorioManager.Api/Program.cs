@@ -21,6 +21,8 @@ builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton<VersionService>();
 builder.Services.AddSingleton<ModService>();
 builder.Services.AddSingleton<PlayerListService>();
+builder.Services.AddSingleton<SystemHealthService>();
+builder.Services.AddSingleton<MaintenanceStatusService>();
 builder.Services.AddHostedService<MaintenanceWorker>();
 builder.Services.AddHttpClient();
 builder.Services.AddSignalR();
@@ -85,13 +87,22 @@ auth.MapPost("/logout", async (HttpContext context) =>
     return Results.NoContent();
 }).RequireAuthorization().AddEndpointFilter(CsrfFilter.Validate);
 auth.MapGet("/me", (HttpContext context) => Results.Ok(new { csrfToken = context.User.FindFirstValue("csrf") })).RequireAuthorization();
+auth.MapPost("/password", async (ChangePasswordRequest request, SetupCodeService service, HttpContext context) =>
+{
+    if (!await service.ChangePasswordAsync(request.CurrentPassword, request.NewPassword, context.RequestAborted))
+        return Results.BadRequest(new { error = "Current password is incorrect or the new password is shorter than 12 characters." });
+    return Results.NoContent();
+}).RequireAuthorization().AddEndpointFilter(CsrfFilter.Validate);
 
 var api = app.MapGroup("/api").RequireAuthorization().AddEndpointFilter(CsrfFilter.Validate);
 api.MapGet("/status", async (ServerSupervisor supervisor) => Results.Ok(await supervisor.GetStatusAsync()));
 api.MapGet("/settings", async (StateStore state, HttpContext context) => Results.Ok(await state.GetAsync<ServerSettings>("settings", context.RequestAborted)));
-api.MapPut("/settings", async (ServerSettings settings, StateStore state, HttpContext context) =>
+api.MapPut("/settings", async (ServerSettings settings, StateStore state, ServerSupervisor supervisor, HttpContext context) =>
 {
-    if (settings.MaxPlayers is < 0 or > 500 || settings.AutosaveMinutes is < 1 or > 120 || settings.BackupRetention is < 1 or > 365)
+    if (supervisor.IsRunning)
+        return Results.Conflict(new { error = "Stop the server before changing settings." });
+    var mapErrors = MapGenerationSettingsValidator.Validate(settings.MapGeneration);
+    if (settings.MaxPlayers is < 0 or > 500 || settings.AutosaveMinutes is < 1 or > 120 || settings.BackupRetention is < 1 or > 365 || mapErrors.Count > 0)
         return Results.ValidationProblem(new Dictionary<string, string[]> { ["settings"] = ["One or more setting values are outside their allowed range."] });
     await state.SetAsync("settings", settings, context.RequestAborted);
     return Results.Ok(settings);
@@ -111,6 +122,12 @@ api.MapPost("/control/{action}", async (string action, ServerSupervisor supervis
     catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
 });
 api.MapGet("/logs", async (ServerSupervisor supervisor, HttpContext context) => Results.Ok(await supervisor.ReadLogsAsync(context.RequestAborted)));
+api.MapGet("/logs/download", (DataPaths paths) =>
+    File.Exists(Path.Combine(paths.Logs, "factorio.log"))
+        ? Results.File(Path.Combine(paths.Logs, "factorio.log"), "text/plain", "factorio.log")
+        : Results.NotFound(new { error = "No log file is available yet." }));
+api.MapGet("/system-health", (SystemHealthService health) => Results.Ok(health.GetSnapshot()));
+api.MapGet("/maintenance", async (MaintenanceStatusService maintenance, HttpContext context) => Results.Ok(await maintenance.GetAsync(context.RequestAborted)));
 
 api.MapGet("/saves", (DataPaths paths) => Results.Ok(Directory.EnumerateFiles(paths.Saves, "*.zip").Select(Path.GetFileName).Order()));
 api.MapPost("/saves/create", async (SaveCreateRequest request, ServerSupervisor supervisor, HttpContext context) =>
@@ -118,8 +135,9 @@ api.MapPost("/saves/create", async (SaveCreateRequest request, ServerSupervisor 
     try { return Results.Ok(new { name = await supervisor.CreateSaveAsync(request.Name, context.RequestAborted) }); }
     catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
 });
-api.MapPost("/saves/select/{saveName}", async (string saveName, StateStore state, DataPaths paths, HttpContext context) =>
+api.MapPost("/saves/select/{saveName}", async (string saveName, StateStore state, DataPaths paths, ServerSupervisor supervisor, HttpContext context) =>
 {
+    if (supervisor.IsRunning) return Results.Conflict(new { error = "Stop the server before switching saves." });
     var safe = Path.GetFileName(saveName);
     if (!string.Equals(safe, saveName, StringComparison.Ordinal) || !File.Exists(Path.Combine(paths.Saves, safe))) return Results.NotFound();
     var settings = await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings();
@@ -127,8 +145,9 @@ api.MapPost("/saves/select/{saveName}", async (string saveName, StateStore state
     await state.SetAsync("settings", settings, context.RequestAborted);
     return Results.Ok(settings);
 });
-api.MapPost("/saves/upload", async (IFormFile file, DataPaths paths, HttpContext context) =>
+api.MapPost("/saves/upload", async (IFormFile file, DataPaths paths, ServerSupervisor supervisor, HttpContext context) =>
 {
+    if (supervisor.IsRunning) return Results.Conflict(new { error = "Stop the server before uploading a save." });
     var safe = Path.GetFileName(file.FileName);
     if (!safe.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || file.Length == 0 || file.Length > 1024L * 1024 * 1024)
         return Results.BadRequest(new { error = "Upload a Factorio .zip save no larger than 1 GB." });
@@ -138,8 +157,9 @@ api.MapPost("/saves/upload", async (IFormFile file, DataPaths paths, HttpContext
 });
 api.MapPost("/saves/backup", async (BackupService backups, HttpContext context) => Results.Ok(new { name = await backups.CreateBackupAsync("manual", context.RequestAborted) }));
 api.MapGet("/backups", (DataPaths paths) => Results.Ok(Directory.EnumerateFiles(paths.Backups, "*.zip").Select(Path.GetFileName).OrderDescending()));
-api.MapPost("/backups/restore/{backupName}", async (string backupName, BackupService backups, HttpContext context) =>
+api.MapPost("/backups/restore/{backupName}", async (string backupName, BackupService backups, ServerSupervisor supervisor, HttpContext context) =>
 {
+    if (supervisor.IsRunning) return Results.Conflict(new { error = "Stop the server before restoring a backup." });
     try { await backups.RestoreAsync(Path.GetFileName(backupName), context.RequestAborted); return Results.NoContent(); }
     catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
 });
@@ -166,7 +186,22 @@ api.MapPost("/mods/install", async (ModInstallRequest request, ModService mods, 
     try { return Results.Ok(await mods.InstallAsync(request, context.RequestAborted)); }
     catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
 });
-api.MapPost("/mods/{name}/enabled/{enabled:bool}", async (string name, bool enabled, ModService mods, HttpContext context) => Results.Ok(await mods.SetEnabledAsync(name, enabled, context.RequestAborted)));
+api.MapGet("/mods/updates", async (ModService mods, HttpContext context) =>
+{
+    try { return Results.Ok(await mods.CheckUpdatesAsync(context.RequestAborted)); }
+    catch (HttpRequestException exception) { return Results.BadRequest(new { error = $"Mod Portal update check failed: {exception.Message}" }); }
+});
+api.MapPost("/mods/{name}/update", async (string name, ModService mods, HttpContext context) =>
+{
+    try { return Results.Ok(await mods.UpdateAsync(name, context.RequestAborted)); }
+    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    catch (HttpRequestException exception) { return Results.BadRequest(new { error = $"Mod Portal update failed: {exception.Message}" }); }
+});
+api.MapPost("/mods/{name}/enabled/{enabled:bool}", async (string name, bool enabled, ModService mods, HttpContext context) =>
+{
+    try { return Results.Ok(await mods.SetEnabledAsync(name, enabled, context.RequestAborted)); }
+    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+});
 
 api.MapGet("/players/{kind}", async (string kind, PlayerListService players, HttpContext context) => Results.Ok(await players.ListAsync(kind, context.RequestAborted)));
 api.MapPost("/players/{kind}", async (string kind, PlayerListRequest request, PlayerListService players, HttpContext context) => Results.Ok(await players.AddAsync(kind, request.PlayerName, context.RequestAborted)));

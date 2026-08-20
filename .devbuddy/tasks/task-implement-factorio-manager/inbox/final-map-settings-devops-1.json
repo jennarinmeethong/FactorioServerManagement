@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "final-map-settings-devops-1",
+  "attempt": 1,
+  "parent_revision": 8,
+  "role": "devops-sre",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Docker Desktop engine was started, the factorio-manager image built successfully, and only the factorio-manager service was recreated via Compose. rtk_required=false; no git commit performed.",
+  "evidence": [
+    { "ref": "docker compose build factorio-manager", "outcome": "exited 0 and produced factorio-server-manager:local" },
+    { "ref": "docker compose up -d --no-deps factorio-manager", "outcome": "service recreated and started successfully" },
+    { "ref": "docker compose ps and GET http://localhost:8080/health", "outcome": "Up (healthy), HTTP 8080 and UDP 34197; health returned stopped state with no error" },
+    { "ref": "bind-mounted data", "outcome": "data/app.db, secrets.json, versions/2.0.77 and 3584 files across data directories persisted" }
+  ],
+  "next_slice": { "summary": "No further Docker action required; deployment verification is complete.", "read_paths": ["factorio-server-management:compose.yaml", "factorio-server-management:Dockerfile"], "read_keys": ["container-health", "data-persistence"] },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

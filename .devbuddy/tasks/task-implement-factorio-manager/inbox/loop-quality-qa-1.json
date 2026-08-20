@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "loop-quality-qa-1",
+  "attempt": 1,
+  "parent_revision": 14,
+  "role": "qa",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Independent QA completed with rtk_required=false. Existing implementation builds and tests successfully; reviewed authentication/CSRF, maintenance, version rollback safety, map-generation JSON, log handling, runtime mutation guards, and secret exposure paths. No source changes made.",
+  "evidence": [
+    { "ref": "dotnet test --no-restore", "outcome": "9/9 tests passed" },
+    { "ref": "bun run --cwd src/FactorioManager.Web build", "outcome": "TypeScript/Vite production build passed with only existing SignalR annotation warnings" },
+    { "ref": "auth, maintenance, version, map, logs, secret, runtime guard review", "outcome": "No code defects found; Docker verification was unavailable in QA environment due named-pipe permission" }
+  ],
+  "next_slice": { "summary": "Run DevOps/container verification from an environment with Docker engine access, then perform final owner closeout.", "read_paths": ["factorio-server-management:Dockerfile", "factorio-server-management:compose.yaml", "factorio-server-management:src/FactorioManager.Api/Program.cs", "factorio-server-management:src/FactorioManager.Api/VersionService.cs", "factorio-server-management:src/FactorioManager.Api/MapGeneration.cs", "factorio-server-management:src/FactorioManager.Api/ServerSupervisor.cs", "factorio-server-management:src/FactorioManager.Web/src/App.tsx"], "read_keys": ["container-health", "persistent-data", "secret-nondisclosure", "graceful-stop", "map-settings-json"] },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

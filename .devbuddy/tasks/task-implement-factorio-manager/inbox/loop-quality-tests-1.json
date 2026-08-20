@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "loop-quality-tests-1",
+  "attempt": 1,
+  "parent_revision": 13,
+  "role": "developer",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Added focused persistence and maintenance safety tests for admin password behavior, map settings validation/serialization, maintenance schedule calculations, system health inventory, and backup retention. rtk_required=false.",
+  "evidence": [
+    { "ref": "tests/FactorioManager.Api.Tests/PersistenceTests.cs", "outcome": "Added maintenance next-run tests and backup retention coverage." },
+    { "ref": "dotnet test --no-restore", "outcome": "Passed: 9, Failed: 0, Skipped: 0." }
+  ],
+  "next_slice": { "summary": "Run independent QA and integration verification for the expanded test suite and current dashboard/API behavior.", "read_paths": ["factorio-server-management:tests/FactorioManager.Api.Tests/PersistenceTests.cs", "factorio-server-management:src/FactorioManager.Api/MaintenanceStatusService.cs", "factorio-server-management:src/FactorioManager.Api/BackupService.cs"], "read_keys": ["maintenance-schedule", "backup-retention", "password-change"] },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

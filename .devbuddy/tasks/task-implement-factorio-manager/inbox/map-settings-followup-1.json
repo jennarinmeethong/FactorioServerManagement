@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "map-settings-followup-1",
+  "attempt": 1,
+  "parent_revision": 7,
+  "role": "developer",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Addressed QA findings with rtk_required=false: detailed Thai descriptions for every enemy expansion, settler, cooldown, and cliff control; separated terrain/resource/cliff map-gen settings from enemy runtime map settings; omitted unset seed; added public validation and serialization helpers plus focused tests.",
+  "evidence": [
+    { "ref": "dotnet test --no-restore", "outcome": "4 passed, 0 failed" },
+    { "ref": "bun run --cwd src/FactorioManager.Web build", "outcome": "passed" },
+    { "ref": "src/FactorioManager.Api/MapGeneration.cs and ServerSupervisor.cs", "outcome": "writes map-gen-settings.json and map-settings.json and passes both official CLI arguments" },
+    { "ref": "tests/FactorioManager.Api.Tests/PersistenceTests.cs", "outcome": "covers invalid settings, omitted seed, separation of enemy settings, cliff keys, and cooldown tick conversion" }
+  ],
+  "next_slice": {
+    "summary": "Run final independent QA, then rebuild/recreate Docker Compose and verify health.",
+    "read_paths": ["factorio-server-management:src/FactorioManager.Api/MapGeneration.cs", "factorio-server-management:src/FactorioManager.Api/ServerSupervisor.cs", "factorio-server-management:src/FactorioManager.Web/src/App.tsx", "factorio-server-management:tests/FactorioManager.Api.Tests/PersistenceTests.cs"],
+    "read_keys": ["map-gen-settings-json", "map-settings-json", "map-settings-ui"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

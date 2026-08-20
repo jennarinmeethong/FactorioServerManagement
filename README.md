@@ -19,6 +19,10 @@ The default compose mapping deliberately binds the dashboard to localhost. To us
 
 The game port is UDP `34197`. The dashboard controls the Factorio process inside the container; stopping the container itself remains a Docker operation.
 
+The dashboard's **System Health** page shows runtime memory, uptime, disk capacity, and the inventory of saves, backups, versions, and mods. Changes that affect the running server (server settings, save selection/upload/restore, or mod installation/toggle) are rejected until the server is stopped, preventing a partial live configuration.
+
+Applying a different Factorio version requires the selected save to be backed up first. If the server was running, the manager stops it, applies the version, and attempts to restart it; a failed restart restores the previous version configuration.
+
 ## Development
 
 ```sh

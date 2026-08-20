@@ -19,6 +19,8 @@ public sealed class ServerSupervisor(
     private bool _manualStop;
     private ServerStatus _status = new(ServerState.Stopped, null, DateTimeOffset.UtcNow, 0, null);
 
+    public bool IsRunning => _process is { HasExited: false };
+
     public Task<ServerStatus> GetStatusAsync() => Task.FromResult(_status);
 
     public async Task<ServerStatus> StartAsync(CancellationToken cancellationToken)
@@ -117,6 +119,14 @@ public sealed class ServerSupervisor(
             var info = new ProcessStartInfo(executable) { WorkingDirectory = Path.GetDirectoryName(executable)!, UseShellExecute = false, RedirectStandardError = true };
             info.ArgumentList.Add("--create");
             info.ArgumentList.Add(savePath);
+            var mapSettingsPath = Path.Combine(paths.Config, "map-gen-settings.json");
+            await WriteMapGenerationSettingsAsync(settings.MapGeneration, mapSettingsPath, cancellationToken);
+            info.ArgumentList.Add("--map-gen-settings");
+            info.ArgumentList.Add(mapSettingsPath);
+            var runtimeMapSettingsPath = Path.Combine(paths.Config, "map-settings.json");
+            await File.WriteAllTextAsync(runtimeMapSettingsPath, MapGenerationSettingsJson.SerializeMapSettings(settings.MapGeneration), cancellationToken);
+            info.ArgumentList.Add("--map-settings");
+            info.ArgumentList.Add(runtimeMapSettingsPath);
             using var process = Process.Start(info) ?? throw new InvalidOperationException("Factorio could not create the new map.");
             await process.WaitForExitAsync(cancellationToken);
             if (process.ExitCode != 0) throw new InvalidOperationException($"Factorio could not create the save: {await process.StandardError.ReadToEndAsync(cancellationToken)}");
@@ -175,6 +185,11 @@ public sealed class ServerSupervisor(
         await JsonSerializer.SerializeAsync(file, document, cancellationToken: cancellationToken);
     }
 
+    private static async Task WriteMapGenerationSettingsAsync(MapGenerationSettings source, string path, CancellationToken cancellationToken)
+    {
+        await File.WriteAllTextAsync(path, MapGenerationSettingsJson.SerializeMapGeneration(source), cancellationToken);
+    }
+
     private string GetExecutable(string version) => Path.Combine(paths.Versions, version, "bin", "x64", "factorio");
 
     private async Task WriteLogAsync(string line)
@@ -183,7 +198,13 @@ public sealed class ServerSupervisor(
         line = line.Replace("token=", "token=[redacted]", StringComparison.OrdinalIgnoreCase);
         _recentLogs.Enqueue($"{DateTimeOffset.UtcNow:O} {line}");
         while (_recentLogs.Count > 500) _recentLogs.TryDequeue(out _);
-        await File.AppendAllTextAsync(Path.Combine(paths.Logs, "factorio.log"), $"{DateTimeOffset.UtcNow:O} {line}{Environment.NewLine}");
+        var logPath = Path.Combine(paths.Logs, "factorio.log");
+        if (File.Exists(logPath) && new FileInfo(logPath).Length > 10 * 1024 * 1024)
+        {
+            var archivePath = Path.Combine(paths.Logs, "factorio.log.1");
+            File.Move(logPath, archivePath, overwrite: true);
+        }
+        await File.AppendAllTextAsync(logPath, $"{DateTimeOffset.UtcNow:O} {line}{Environment.NewLine}");
         await hub.Clients.All.SendAsync("log", line);
     }
 

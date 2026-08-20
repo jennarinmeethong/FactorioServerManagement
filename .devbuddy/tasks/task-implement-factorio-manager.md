@@ -3,7 +3,7 @@
 - Status: `queued`
 - Project IDs: [factorio-server-management]
 - Session ID / attempt: 20260816-codex / 1
-- Memory revision: 4
+- Memory revision: 16
 - Memory root reference: C:\Codes\FactorioServerManagement\.devbuddy
 
 ## Slices, locks, and records
@@ -23,3 +23,42 @@
 
 ## Canonical commits
 - revision 4: Implementation complete: developer added approval-only update status UI; QA passed 2/2 backend tests and frontend build; DevOps rebuilt/recreated local Docker Compose service with healthy /health. No canonical knowledge promoted and no Git action performed.
+
+## Canonical commits
+- revision 5: Reserve source scope for map generation settings slice; parent revision 4; specialist will implement typed persistence, Factorio map-gen-settings.json generation, API, and detailed Thai UI explanations. rtk_required=false.
+
+## Canonical commits
+- revision 6: Accepted map-settings-1: typed map generation persistence, Factorio map-gen-settings.json creation, validation, --map-gen-settings integration, and detailed Thai dashboard controls. rtk_required=false.
+
+## Canonical commits
+- revision 7: QA follow-up: strengthen map settings descriptions, omit nullable seed safely, and add focused validation/JSON tests. rtk_required=false.
+
+## Canonical commits
+- revision 8: Accepted follow-up map-settings slice: official map-gen/map-settings separation, valid cliff/expansion keys, omitted seed, per-control Thai descriptions, and focused tests. rtk_required=false.
+
+## Canonical commits
+- revision 9: Accepted final QA and DevOps: 4/4 backend tests, frontend build, official Factorio JSON separation verified, Docker image rebuilt/recreated healthy with persistent bind-mounted data. rtk_required=false.
+
+## Canonical commits
+- revision 10: Corrected Factorio cliff richness serialization to numeric map-gen value and added regression assertion. dotnet tests 4/4 and frontend build pass. rtk_required=false.
+
+## Canonical commits
+- revision 11: Accepted final Docker verification after cliff richness correction: image healthy, /health valid, UDP 34197 exposed, /data bind mount persistent. rtk_required=false.
+
+## Sessions
+- 20260820-codex-loop
+
+## Canonical commits
+- revision 12: Loop baseline accepted: advanced map dimensions/trees, maintenance status, admin password change, log search/download/rotation, runtime mutation guards, Mod Portal update/dependency checks, and version pre-update backup/confirmation are present; this loop now adds remaining v1 quality and compatibility work. rtk_required=false.
+
+## Canonical commits
+- revision 13: Loop iteration 1 scope reserved for independent integration-level coverage of auth/password, settings guards, maintenance status, and mod/version safety without changing public architecture. model=gpt-5.6-luna effort=medium rtk_required=false.
+
+## Canonical commits
+- revision 14: Accepted loop-quality-tests-1: added maintenance schedule and backup retention coverage; backend test suite now 9/9. rtk_required=false.
+
+## Canonical commits
+- revision 15: Accepted loop-quality-qa-1: independent review passed 9/9 backend tests and frontend build; no code defects, Docker verification routed to DevOps due environment access. rtk_required=false.
+
+## Canonical commits
+- revision 16: Accepted loop quality DevOps: Docker image rebuilt, container healthy, HTTP health passed, ports and /data persistence verified.

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "map-settings-1",
+  "attempt": 1,
+  "parent_revision": 5,
+  "role": "developer",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Implemented typed Factorio map-generation settings with backward-compatible defaults, SQLite persistence through ServerSettings, validation, Factorio-compatible map-gen-settings.json generation, and --map-gen-settings during map creation. Dashboard now exposes terrain, seed, peaceful mode, all resource controls, enemy bases, evolution, expansion, settlers, cliffs, and Thai descriptions/tooltips. rtk_required=false.",
+  "evidence": [
+    { "ref": "dotnet build src/FactorioManager.Api/FactorioManager.Api.csproj --no-restore", "outcome": "passed with 0 warnings and 0 errors" },
+    { "ref": "bun run --cwd src/FactorioManager.Web build", "outcome": "passed; Vite emitted only existing SignalR annotation warnings" },
+    { "ref": "src/FactorioManager.Api/Domain.cs, Program.cs, ServerSupervisor.cs, src/FactorioManager.Web/src/App.tsx", "outcome": "implemented map settings model, validation, generation JSON, API persistence, and Thai dashboard controls" }
+  ],
+  "next_slice": {
+    "summary": "Run QA tests and inspect API/frontend map-settings compatibility, then rebuild/deploy Docker image.",
+    "read_paths": [
+      "factorio-server-management:src/FactorioManager.Api/Domain.cs",
+      "factorio-server-management:src/FactorioManager.Api/Program.cs",
+      "factorio-server-management:src/FactorioManager.Api/ServerSupervisor.cs",
+      "factorio-server-management:src/FactorioManager.Web/src/App.tsx"
+    ],
+    "read_keys": ["map-generation-settings", "map-gen-settings-json", "create-save"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

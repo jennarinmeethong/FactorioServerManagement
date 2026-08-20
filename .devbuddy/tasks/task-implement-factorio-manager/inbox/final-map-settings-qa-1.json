@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "final-map-settings-qa-1",
+  "attempt": 1,
+  "parent_revision": 8,
+  "role": "qa",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Independent QA passed with rtk_required=false. Map generation implementation is compatible with the official Factorio file split and the dashboard covers the requested settings.",
+  "evidence": [
+    { "ref": "dotnet test --no-restore", "outcome": "4/4 passed" },
+    { "ref": "bun run --cwd src/FactorioManager.Web build", "outcome": "passed; only existing third-party annotation warnings" },
+    { "ref": "src/FactorioManager.Api/MapGeneration.cs", "outcome": "map-gen JSON contains terrain/resources/cliffs and omits enemy_evolution; runtime map-settings contains enemy evolution/expansion with min_expansion_distance and tick conversion; unset seed omitted" },
+    { "ref": "src/FactorioManager.Web/src/App.tsx", "outcome": "Thai descriptions present for seed, terrain, resources, enemy expansion, evolution, and cliff fields" }
+  ],
+  "next_slice": { "summary": "No further QA slice required; proceed to Docker rebuild and health verification.", "read_paths": ["factorio-server-management:src/FactorioManager.Api/MapGeneration.cs", "factorio-server-management:src/FactorioManager.Web/src/App.tsx"], "read_keys": ["map-gen-settings-json", "map-settings-json", "map-settings-ui"] },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}
