@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>คู่มือ Factorio Server Manager ด้วย Docker</title>
+  <style>
+    :root { color-scheme: dark; --bg:#111827; --panel:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --accent:#facc15; --ok:#86efac; --line:#374151; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:linear-gradient(135deg,#111827,#0f172a); color:var(--text); font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    main { max-width:1000px; margin:0 auto; padding:32px 20px 64px; }
+    h1,h2,h3 { line-height:1.25; color:#fff; }
+    h1 { font-size:clamp(2rem,5vw,3.5rem); margin:0 0 12px; }
+    h2 { margin-top:40px; border-bottom:1px solid var(--line); padding-bottom:10px; }
+    h3 { margin-bottom:6px; }
+    p,li { color:var(--text); }
+    .lead { color:var(--muted); font-size:1.1rem; max-width:760px; }
+    .status { display:inline-block; border:1px solid #166534; background:#052e16; color:var(--ok); border-radius:999px; padding:5px 12px; font-weight:700; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin:22px 0; }
+    .card { background:rgba(31,41,55,.86); border:1px solid var(--line); border-radius:12px; padding:18px; }
+    .card strong { display:block; color:var(--accent); font-size:1.05rem; }
+    code,pre { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
+    code { color:#fde68a; }
+    pre { overflow:auto; background:#030712; border:1px solid var(--line); border-radius:10px; padding:16px; color:#d1d5db; }
+    .note { border-left:4px solid var(--accent); background:#422006; padding:12px 16px; border-radius:0 8px 8px 0; }
+    table { width:100%; border-collapse:collapse; margin:16px 0; }
+    th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { color:var(--accent); }
+    a { color:#fde047; }
+    footer { color:var(--muted); margin-top:42px; font-size:.9rem; }
+    @media (max-width:600px) { main { padding:24px 14px 48px; } table { font-size:.92rem; } th,td { padding:8px 6px; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="status">Docker พร้อมใช้งาน</span>
+    <h1>Factorio Server Manager</h1>
+    <p class="lead">คู่มือรัน dashboard และ Factorio dedicated server ใน Docker Compose สำหรับโปรเจกต์นี้</p>
+  </header>
+
+  <section aria-labelledby="status-heading">
+    <h2 id="status-heading">สถานะปัจจุบัน</h2>
+    <div class="grid">
+      <div class="card"><strong>Dockerfile</strong>มี multi-stage build สำหรับ Bun, ASP.NET Core 10 และ runtime image แล้ว</div>
+      <div class="card"><strong>Compose</strong>มี service <code>factorio-manager</code>, bind mount <code>./data</code> และพอร์ตครบแล้ว</div>
+      <div class="card"><strong>ตรวจสอบล่าสุด</strong>image build สำเร็จ, container healthy และ <code>/health</code> ตอบกลับสำเร็จ</div>
+    </div>
+  </section>
+
+  <section aria-labelledby="requirements-heading">
+    <h2 id="requirements-heading">สิ่งที่ต้องมี</h2>
+    <ul>
+      <li>Docker Desktop หรือ Docker Engine ที่รองรับ <code>docker compose</code></li>
+      <li>พื้นที่ว่างสำหรับ image, Factorio server, saves, mods และ backups</li>
+      <li>พอร์ต TCP <code>8080</code> และ UDP <code>34197</code> ต้องไม่ถูกใช้งานโดยโปรแกรมอื่น</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="quickstart-heading">
+    <h2 id="quickstart-heading">เริ่มใช้งานอย่างรวดเร็ว</h2>
+    <p>เปิด terminal ที่โฟลเดอร์รากของโปรเจกต์ แล้วรัน:</p>
+    <pre><code>docker compose up --build -d
+docker compose ps
+docker compose logs -f factorio-manager</code></pre>
+    <p>เมื่อเห็นสถานะ <code>healthy</code> ให้เปิด <a href="http://localhost:8080">http://localhost:8080</a></p>
+    <div class="note"><strong>ครั้งแรก:</strong> ดูรหัส setup ใน log ด้วยคำสั่งด้านบน รหัสจะอยู่หลังข้อความ <code>first-run setup code</code> แล้วนำไปกรอกในหน้าเว็บ</div>
+  </section>
+
+  <section aria-labelledby="setup-heading">
+    <h2 id="setup-heading">การตั้งค่าครั้งแรก</h2>
+    <ol>
+      <li>คัดลอกรหัส first-run setup จาก log ของ container</li>
+      <li>สร้างรหัสผ่านผู้ดูแลระบบยาวอย่างน้อย 12 ตัวอักษร</li>
+      <li>กรอก Factorio username และ token ได้ถ้าต้องการให้ระบบดาวน์โหลด server version หรือ mod จาก Factorio</li>
+      <li>หลัง setup สำเร็จ ให้เข้าสู่ระบบด้วย username <code>admin</code></li>
+    </ol>
+    <p>หากต้องการดูเฉพาะรหัส setup โดยไม่ติดตาม log ต่อเนื่อง:</p>
+    <pre><code>docker compose logs factorio-manager | Select-String "first-run setup code"</code></pre>
+  </section>
+
+  <section aria-labelledby="ports-heading">
+    <h2 id="ports-heading">พอร์ตและการเข้าถึง</h2>
+    <table>
+      <thead><tr><th>พอร์ต</th><th>โปรโตคอล</th><th>หน้าที่</th></tr></thead>
+      <tbody>
+        <tr><td><code>127.0.0.1:8080</code></td><td>TCP</td><td>เว็บ dashboard; ค่าเริ่มต้นเข้าถึงได้เฉพาะเครื่อง host</td></tr>
+        <tr><td><code>34197</code></td><td>UDP</td><td>พอร์ต Factorio multiplayer</td></tr>
+      </tbody>
+    </table>
+    <p>หากต้องการให้เครื่องอื่นใน LAN เปิด dashboard ได้ ให้แก้ใน <code>compose.yaml</code> จาก <code>127.0.0.1:8080:8080</code> เป็น <code>8080:8080</code> แล้วจำกัดด้วย firewall และ reverse proxy/TLS ก่อนเปิดสู่อินเทอร์เน็ต</p>
+  </section>
+
+  <section aria-labelledby="data-heading">
+    <h2 id="data-heading">ข้อมูลถาวรและการสำรอง</h2>
+    <p>โฟลเดอร์ <code>./data</code> ถูก mount เข้า container ที่ <code>/data</code> และเก็บ:</p>
+    <ul>
+      <li>ฐานข้อมูล SQLite และ account/configuration</li>
+      <li>Factorio versions, saves, backups, mods และ log</li>
+      <li>credentials ของ Factorio ที่บันทึกไว้ในระบบ</li>
+    </ul>
+    <p>สำรองข้อมูลจาก host ได้โดยหยุด service ก่อนเพื่อความสอดคล้องของไฟล์:</p>
+    <pre><code>docker compose stop
+# คัดลอกหรือ archive โฟลเดอร์ ./data ไปยังพื้นที่สำรองที่ปลอดภัย
+docker compose start</code></pre>
+    <div class="note">อย่า commit <code>data/</code> เข้า Git เพราะอาจมีฐานข้อมูล, credentials, saves และ backups อยู่ภายใน</div>
+  </section>
+
+  <section aria-labelledby="operations-heading">
+    <h2 id="operations-heading">คำสั่งดูแลระบบ</h2>
+    <pre><code># ดูสถานะและ health
+docker compose ps
+curl http://localhost:8080/health
+
+# ดู log
+docker compose logs -f factorio-manager
+
+# หยุด / เริ่ม / restart
+docker compose stop
+docker compose start
+docker compose restart
+
+# อัปเดต image จาก source ปัจจุบัน
+docker compose up --build -d
+
+# ปิดและลบ container/network (ไม่ลบ ./data)
+docker compose down</code></pre>
+    <p>การหยุด Factorio server จากหน้า dashboard กับการหยุด container เป็นคนละการทำงาน: ใช้ dashboard ควบคุม process ในเกม และใช้ Docker ควบคุม container</p>
+  </section>
+
+  <section aria-labelledby="troubleshooting-heading">
+    <h2 id="troubleshooting-heading">แก้ปัญหาเบื้องต้น</h2>
+    <h3>เว็บเปิดไม่ได้</h3>
+    <p>ตรวจ <code>docker compose ps</code> และ <code>docker compose logs --tail 100 factorio-manager</code> หากพอร์ต 8080 ถูกใช้ ให้แก้ port ฝั่ง host ใน <code>compose.yaml</code> เช่น <code>127.0.0.1:18080:8080</code> แล้วเปิดที่พอร์ตใหม่</p>
+    <h3>container ไม่ healthy</h3>
+    <p>เรียก <code>curl http://localhost:8080/health</code> และอ่าน log ตรวจว่าระบบ start สำเร็จหรือไม่ จากนั้นลอง <code>docker compose up --build -d</code> อีกครั้ง</p>
+    <h3>Factorio server ดาวน์โหลดไม่ได้</h3>
+    <p>ตรวจ Factorio username/token ในหน้า setup และตรวจการเชื่อมต่ออินเทอร์เน็ตของ Docker host</p>
+    <h3>เปลี่ยนค่าที่กระทบ server ไม่ได้</h3>
+    <p>ระบบตั้งใจบังคับให้หยุด Factorio server ก่อนเปลี่ยน settings, save หรือ mods เพื่อป้องกัน configuration ค้างครึ่งทาง</p>
+  </section>
+
+  <section aria-labelledby="development-heading">
+    <h2 id="development-heading">พัฒนาโดยไม่ใช้ Docker</h2>
+    <pre><code># terminal 1
+dotnet run --project src/FactorioManager.Api --urls http://localhost:8080
+
+# terminal 2
+cd src/FactorioManager.Web
+bun install
+bun run dev</code></pre>
+    <p>Vite จะ proxy <code>/api</code> และ <code>/hubs</code> ไปยัง backend; หากรันนอก Docker ให้กำหนด <code>DataRoot</code> เป็นโฟลเดอร์ข้อมูลแยกต่างหาก</p>
+  </section>
+
+  <footer>อ้างอิงจาก Dockerfile, compose.yaml และ README ของ Factorio Server Manager</footer>
+</main>
+</body>
+</html>

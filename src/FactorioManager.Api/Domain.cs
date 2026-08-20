@@ -62,13 +62,45 @@ public sealed record ServerSettings(
 
 public sealed record ServerStatus(ServerState State, int? ProcessId, DateTimeOffset ChangedAt, int RestartAttempt, string? Message);
 public sealed record SetupRequest(string Code, string Password, string? FactorioUsername, string? FactorioToken);
-public sealed record LoginRequest(string Password);
+public sealed record LoginRequest(string Password, string? Username = null);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record SecretSettings(string? FactorioUsername, string? FactorioToken);
-public sealed record ModEntry(string Name, string Version, bool Enabled, string[] Dependencies, DateTimeOffset InstalledAt);
+public enum ModSource { Portal, Local }
+public sealed record ModEntry(
+    string Name,
+    string Version,
+    bool Enabled,
+    string[] Dependencies,
+    DateTimeOffset InstalledAt,
+    ModSource Source = ModSource.Portal,
+    string? ArchiveFileName = null,
+    string? Sha256 = null,
+    string? FactorioVersionRequirement = null);
 public sealed record ModUpdateInfo(string Name, string InstalledVersion, string? LatestVersion, bool UpdateAvailable, string[] MissingDependencies, string? DownloadUrl);
-public sealed record ModInstallRequest(string Name, string DownloadUrl, bool Enabled = true);
+public sealed record ModInstallRequest(string Name, string? DownloadUrl = null, bool Enabled = true, string? Version = null, bool IncludeDependencies = true, bool Confirm = false);
+public sealed record ModUploadRequest(bool Enabled = true, bool IncludeDependencies = true, bool Confirm = false);
+public sealed record ModProfileEntry(string Name, string Version, bool Enabled);
+public sealed record ModProfile(string Name, ModProfileEntry[] Mods, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+public sealed record ModProfileRequest(string Name, ModProfileEntry[] Mods);
+public sealed record ModBulkUpdateRequest(string[] Names, bool Confirm = false);
+public sealed record ModOperationResult(string Operation, bool Success, string Message, ModEntry[] Mods, string[] Blockers = null!);
+public sealed record ModPreflightRequest(string Operation, string[] Names, string? ProfileName = null, bool Confirm = false);
+public sealed record ModPreflightResult(string Operation, bool Allowed, bool RequiresBackup, string? ActiveSave, string? ActiveVersion, ModEntry[] PlannedMods, string[] Blockers, string[] Warnings, string[] Downloads);
+public sealed record ModRecoveryStatus(bool Pending, string? Message, string[] QuarantinedFiles, DateTimeOffset? StartedAt);
+public sealed record ModSaveBaseline(string SaveName, ModEntry[] Mods, DateTimeOffset CapturedAt);
 public sealed record VersionApplyRequest(string Version, string Channel);
 public sealed record PlayerListRequest(string PlayerName);
+public sealed record LivePlayer(string Name, int? OnlineSinceSeconds = null);
+public sealed record LiveChatRequest(string Message);
+public sealed record LivePlayerActionRequest(string PlayerName, string? Reason = null);
 public sealed record SaveCreateRequest(string Name);
+public sealed record BackupMetadata(string Id, string FileName, string SourceSave, long Length, string Sha256, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc);
+public sealed record BackupRenameRequest(string Name);
+public sealed record BackupRestoreRequest(bool Confirm);
 public sealed record UpdateStatus(string? AvailableVersion, string? CheckedVersion, DateTimeOffset CheckedAt, string? Error);
+public enum UserRole { Owner, Admin, Viewer }
+public sealed record UserRecord(string Id, string Username, UserRole Role, string SecurityStamp, DateTimeOffset CreatedAtUtc, DateTimeOffset UpdatedAtUtc);
+public sealed record CreateUserRequest(string Username, string Password, UserRole Role = UserRole.Viewer);
+public sealed record ChangeRoleRequest(UserRole Role);
+public sealed record UserPasswordRequest(string Password);
+public sealed record AuditEvent(long Id, DateTimeOffset OccurredAtUtc, string? ActorUserId, string Action, string TargetType, string? TargetId, string Outcome, string DetailsJson);

@@ -1,5 +1,7 @@
 # Factorio Server Manager
 
+คู่มือ Docker แบบ HTML: [docs/docker-guide.html](docs/docker-guide.html)
+
 One Docker container manages one Linux `amd64` Factorio dedicated server. It contains an ASP.NET Core 10 control plane and a React dashboard; all durable state lives in the host-mounted `./data` directory.
 
 ## Run

@@ -1,6 +1,7 @@
 using FactorioManager.Api;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
+using System.IO.Compression;
 using System.Text.Json;
 using Xunit;
 
@@ -21,6 +22,85 @@ public sealed class PersistenceTests : IDisposable
         Assert.True(await setup.VerifyPasswordAsync("this-is-a-safe-password"));
         Assert.False(await setup.TryConfigureAsync(setup.Code, "another-safe-password"));
         Assert.False(await setup.VerifyPasswordAsync("another-safe-password"));
+    }
+
+    [Fact]
+    public void ModDependencyGraphRejectsCyclesAndMissingDependencies()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var cycle = new[] { new ModEntry("a", "1", true, ["b"], now), new ModEntry("b", "1", true, ["a"], now) };
+        Assert.Throws<InvalidOperationException>(() => ModService.ValidateDependencyGraph(cycle));
+        var missing = new[] { new ModEntry("a", "1", true, ["? missing >= 1"], now) };
+        Assert.Throws<InvalidOperationException>(() => ModService.ValidateDependencyGraph(missing));
+    }
+
+    [Fact]
+    public void ModNamesRejectTraversalAndInvalidPaths()
+    {
+        var method = typeof(ModService).GetMethod("ValidateName", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        Assert.Throws<System.Reflection.TargetInvocationException>(() => method.Invoke(null, ["../escape"]));
+        Assert.Throws<System.Reflection.TargetInvocationException>(() => method.Invoke(null, ["bad/name"]));
+    }
+
+    [Fact]
+    public void ModDependencyConstraintsSupportVersionAndConflictRules()
+    {
+        var now = DateTimeOffset.UtcNow;
+        ModService.ValidateDependencyGraph([
+            new ModEntry("library", "2.1.0", true, [], now),
+            new ModEntry("consumer", "1.0.0", true, ["library >= 2.0"], now)
+        ]);
+        Assert.Throws<InvalidOperationException>(() => ModService.ValidateDependencyGraph([
+            new ModEntry("library", "1.9.0", true, [], now),
+            new ModEntry("consumer", "1.0.0", true, ["library >= 2.0"], now)
+        ]));
+        Assert.Throws<InvalidOperationException>(() => ModService.ValidateDependencyGraph([
+            new ModEntry("a", "1.0.0", true, ["! b"], now),
+            new ModEntry("b", "1.0.0", true, [], now)
+        ]));
+    }
+
+    [Fact]
+    public async Task LocalModUploadPersistsMetadataChecksumAndManifest()
+    {
+        var paths = CreatePaths();
+        paths.EnsureCreated();
+        var store = new StateStore(paths);
+        await store.InitializeAsync(CancellationToken.None);
+        await store.SetAsync("settings", new ServerSettings(ActiveVersion: "2.0.77"), CancellationToken.None);
+        await using var archive = new MemoryStream();
+        using (var zip = new ZipArchive(archive, ZipArchiveMode.Create, true))
+        {
+            var entry = zip.CreateEntry("example-mod/info.json");
+            await using var writer = new StreamWriter(entry.Open());
+            await writer.WriteAsync("{\"name\":\"example-mod\",\"version\":\"1.2.3\",\"factorio_version\":\"2.0\",\"dependencies\":[]}");
+        }
+        archive.Position = 0;
+        var supervisor = new ServerSupervisor(paths, store, null!, null!);
+        var service = new ModService(paths, store, null!, supervisor);
+
+        var uploaded = await service.UploadAsync(archive, "example-mod.zip", new ModUploadRequest(), CancellationToken.None);
+
+        Assert.Equal("example-mod", uploaded.Name);
+        Assert.Equal("1.2.3", uploaded.Version);
+        Assert.Equal(ModSource.Local, uploaded.Source);
+        Assert.NotNull(uploaded.Sha256);
+        Assert.True(File.Exists(Path.Combine(paths.Mods, "example-mod_1.2.3.zip")));
+        Assert.Contains("example-mod", await File.ReadAllTextAsync(Path.Combine(paths.Mods, "mod-list.json")));
+    }
+
+    [Fact]
+    public async Task LocalModUploadRejectsMalformedZip()
+    {
+        var paths = CreatePaths();
+        paths.EnsureCreated();
+        var store = new StateStore(paths);
+        await store.InitializeAsync(CancellationToken.None);
+        var supervisor = new ServerSupervisor(paths, store, null!, null!);
+        var service = new ModService(paths, store, null!, supervisor);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UploadAsync(new MemoryStream([1, 2, 3]), "broken.zip", new ModUploadRequest(), CancellationToken.None));
+        Assert.Empty(Directory.EnumerateFiles(paths.Mods, "*.zip"));
     }
 
     [Fact]
@@ -59,6 +139,28 @@ public sealed class PersistenceTests : IDisposable
         Assert.Contains(errors, error => error.Contains("cooldown", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(errors, error => error.Contains("Cliff", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(errors, error => error.Contains("dimensions", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void LivePlayerParserIgnoresHeadersAndDeduplicatesNames()
+    {
+        var players = LivePlayerParser.ParsePlayers("Online players (2):\n  Engineer\n  Engineer\n  Builder");
+        Assert.Equal(["Engineer", "Builder"], players.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void LiveChatAndPlayerNamesHaveBoundedInput()
+    {
+        Assert.Throws<ArgumentException>(() => LivePlayerService.ValidateMessage(new string('x', 201)));
+        Assert.Throws<ArgumentException>(() => LivePlayerService.ValidateName("bad name"));
+    }
+
+    [Fact]
+    public async Task RconTransportFailuresAreReportedAsUnavailable()
+    {
+        var client = new SourceRconClient();
+        var exception = await Record.ExceptionAsync(() => client.ExecuteAsync(new RconEndpoint(1, "ephemeral"), "/players", CancellationToken.None));
+        Assert.True(exception is RconUnavailableException or TimeoutException);
     }
 
     [Fact]

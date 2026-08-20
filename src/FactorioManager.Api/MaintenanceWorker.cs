@@ -14,9 +14,10 @@ public sealed class MaintenanceWorker(
                 var state = scope.ServiceProvider.GetRequiredService<StateStore>();
                 var backup = scope.ServiceProvider.GetRequiredService<BackupService>();
                 var versions = scope.ServiceProvider.GetRequiredService<VersionService>();
+                var supervisor = scope.ServiceProvider.GetRequiredService<ServerSupervisor>();
                 var settings = await state.GetAsync<ServerSettings>("settings", stoppingToken) ?? new ServerSettings();
                 var lastBackup = await state.GetAsync<DateTimeOffset?>("last_scheduled_backup", stoppingToken);
-                if (!string.IsNullOrWhiteSpace(settings.ActiveSave) && (lastBackup is null || DateTimeOffset.UtcNow - lastBackup >= TimeSpan.FromHours(settings.BackupIntervalHours)))
+                if (!supervisor.IsRunning && !string.IsNullOrWhiteSpace(settings.ActiveSave) && (lastBackup is null || DateTimeOffset.UtcNow - lastBackup >= TimeSpan.FromHours(settings.BackupIntervalHours)))
                 {
                     await backup.CreateBackupAsync("scheduled", stoppingToken);
                     await state.SetAsync<DateTimeOffset?>("last_scheduled_backup", DateTimeOffset.UtcNow, stoppingToken);

@@ -18,6 +18,7 @@ public sealed class ServerSupervisor(
     private Process? _process;
     private bool _manualStop;
     private ServerStatus _status = new(ServerState.Stopped, null, DateTimeOffset.UtcNow, 0, null);
+    public RconEndpoint? RconEndpoint { get; private set; }
 
     public bool IsRunning => _process is { HasExited: false };
 
@@ -28,6 +29,8 @@ public sealed class ServerSupervisor(
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            // Never retain an ephemeral credential across a failed/retried startup.
+            RconEndpoint = null;
             if (_process is { HasExited: false }) return _status;
             var settings = await store.GetAsync<ServerSettings>("settings", cancellationToken) ?? new ServerSettings();
             if (string.IsNullOrWhiteSpace(settings.ActiveVersion)) throw new InvalidOperationException("Choose and download a Factorio version before starting the server.");
@@ -52,6 +55,12 @@ public sealed class ServerSupervisor(
             startInfo.ArgumentList.Add(save);
             startInfo.ArgumentList.Add("--server-settings");
             startInfo.ArgumentList.Add(Path.Combine(paths.Config, "server-settings.json"));
+            // The RCON listener is process-local and never exposed by Docker/network configuration.
+            var rconPort = GetFreeLoopbackPort();
+            var rconPassword = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
+            RconEndpoint = new RconEndpoint(rconPort, rconPassword);
+            startInfo.ArgumentList.Add("--rcon-port"); startInfo.ArgumentList.Add(rconPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            startInfo.ArgumentList.Add("--rcon-password"); startInfo.ArgumentList.Add(rconPassword);
             var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             process.OutputDataReceived += (_, eventArgs) => { if (eventArgs.Data is not null) _ = WriteLogAsync(eventArgs.Data); };
             process.ErrorDataReceived += (_, eventArgs) => { if (eventArgs.Data is not null) _ = WriteLogAsync(eventArgs.Data); };
@@ -62,6 +71,11 @@ public sealed class ServerSupervisor(
             _process = process;
             await SetStatusAsync(new(ServerState.Running, process.Id, DateTimeOffset.UtcNow, 0, null));
             return _status;
+        }
+        catch
+        {
+            RconEndpoint = null;
+            throw;
         }
         finally { _gate.Release(); }
     }
@@ -74,6 +88,7 @@ public sealed class ServerSupervisor(
             _manualStop = true;
             if (_process is null || _process.HasExited)
             {
+                RconEndpoint = null;
                 await SetStatusAsync(new(ServerState.Stopped, null, DateTimeOffset.UtcNow, 0, null));
                 return _status;
             }
@@ -89,6 +104,7 @@ public sealed class ServerSupervisor(
                 await process.WaitForExitAsync(cancellationToken);
             }
             _process = null;
+            RconEndpoint = null;
             await SetStatusAsync(new(ServerState.Stopped, null, DateTimeOffset.UtcNow, 0, null));
             return _status;
         }
@@ -146,7 +162,8 @@ public sealed class ServerSupervisor(
     {
         var wasManual = _manualStop;
         var exitCode = exited.ExitCode;
-        if (ReferenceEquals(_process, exited)) _process = null;
+        var wasCurrent = ReferenceEquals(_process, exited);
+        if (wasCurrent) { _process = null; RconEndpoint = null; }
         if (wasManual)
         {
             await SetStatusAsync(new(ServerState.Stopped, null, DateTimeOffset.UtcNow, 0, null));
@@ -191,6 +208,12 @@ public sealed class ServerSupervisor(
     }
 
     private string GetExecutable(string version) => Path.Combine(paths.Versions, version, "bin", "x64", "factorio");
+
+    private static int GetFreeLoopbackPort()
+    {
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start(); var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port; listener.Stop(); return port;
+    }
 
     private async Task WriteLogAsync(string line)
     {
