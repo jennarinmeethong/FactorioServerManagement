@@ -27,7 +27,7 @@ public sealed class SetupCodeService(StateStore state)
 
     public async Task<bool> TryConfigureAsync(string code, string password, CancellationToken cancellationToken = default)
     {
-        if (await IsConfiguredAsync(cancellationToken) || !string.Equals(code, Code, StringComparison.Ordinal) || password.Length < 12)
+        if (await IsConfiguredAsync(cancellationToken) || !string.Equals(code, Code, StringComparison.Ordinal) || password.Length < 8)
             return false;
         await state.SetAsync("admin_password", BCrypt.Net.BCrypt.HashPassword(password), cancellationToken);
         return true;
@@ -41,7 +41,7 @@ public sealed class SetupCodeService(StateStore state)
 
     public async Task<bool> ChangePasswordAsync(string currentPassword, string newPassword, CancellationToken cancellationToken = default)
     {
-        if (newPassword.Length < 12 || !await VerifyPasswordAsync(currentPassword, cancellationToken)) return false;
+        if (newPassword.Length < 8 || !await VerifyPasswordAsync(currentPassword, cancellationToken)) return false;
         await state.SetAsync("admin_password", BCrypt.Net.BCrypt.HashPassword(newPassword), cancellationToken);
         return true;
     }

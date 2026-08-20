@@ -3,7 +3,7 @@
 - Status: `in_progress`
 - Project IDs: [factorio-server-management]
 - Session ID / attempt: 20260816-codex / 1
-- Memory revision: 22
+- Memory revision: 24
 - Memory root reference: C:\Codes\FactorioServerManagement\.devbuddy
 
 ## Slices, locks, and records
@@ -93,3 +93,9 @@
 
 ## Canonical commits
 - revision 22: Milestone 2 complete: live RCON/player controls, save/backup lifecycle, and transactional mod management with profiles/dependencies/bulk operations/UI passed QA; 16 backend tests pass. Milestone 3 is next.
+
+## Canonical commits
+- revision 23: Password minimum 8, robust empty JSON handling, persistent owner dashboard shell, and improved Mods selection/filter/sort/pagination implemented and verified.
+
+## Canonical commits
+- revision 24: QA findings remediated: backend 8-character password enforcement, safe Versions empty-response fallback, and installed Mods paged controls verified in final build/container.

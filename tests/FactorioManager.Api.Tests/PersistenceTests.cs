@@ -25,6 +25,32 @@ public sealed class PersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task PasswordPolicyAcceptsEightCharactersAndRejectsSeven()
+    {
+        var store = await CreateStoreAsync();
+        var setup = new SetupCodeService(store);
+
+        Assert.False(await setup.TryConfigureAsync(setup.Code, "1234567"));
+        Assert.True(await setup.TryConfigureAsync(setup.Code, "12345678"));
+        Assert.False(await setup.ChangePasswordAsync("12345678", "1234567"));
+        Assert.True(await setup.ChangePasswordAsync("12345678", "87654321"));
+    }
+
+    [Fact]
+    public async Task LegacyAdminViewerIsPromotedToOwner()
+    {
+        var store = await CreateStoreAsync();
+        var setup = new SetupCodeService(store);
+        Assert.True(await setup.TryConfigureAsync(setup.Code, "12345678"));
+
+        var accounts = new AccountService(store);
+        await accounts.CreateAsync("admin", "87654321", UserRole.Viewer);
+        await accounts.EnsureInitialOwnerAsync();
+
+        Assert.Equal(UserRole.Owner, (await accounts.FindByUsernameAsync("admin"))?.Role);
+    }
+
+    [Fact]
     public void ModDependencyGraphRejectsCyclesAndMissingDependencies()
     {
         var now = DateTimeOffset.UtcNow;

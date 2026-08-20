@@ -71,6 +71,7 @@ builder.Services.AddRateLimiter(options =>
 var app = builder.Build();
 var store = app.Services.GetRequiredService<StateStore>();
 await store.InitializeAsync(app.Lifetime.ApplicationStopping);
+await app.Services.GetRequiredService<AccountService>().EnsureInitialOwnerAsync(app.Lifetime.ApplicationStopping);
 await app.Services.GetRequiredService<ModService>().InitializeAsync(app.Lifetime.ApplicationStopping);
 var setup = app.Services.GetRequiredService<SetupCodeService>();
 if (!await setup.IsConfiguredAsync(app.Lifetime.ApplicationStopping))
@@ -91,7 +92,7 @@ auth.MapPost("/setup", async (SetupRequest request, HttpContext context, SetupCo
     if (!await service.TryConfigureAsync(request.Code, request.Password, context.RequestAborted))
         return Results.BadRequest(new { error = "Setup is unavailable, the code is invalid, or the password is too short." });
     await secrets.WriteAsync(new SecretSettings(request.FactorioUsername, request.FactorioToken), context.RequestAborted);
-    await accounts.EnsureOwnerFromLegacyAsync(context.RequestAborted); await audit.WriteAsync("setup","user",null,"success",null,context.RequestAborted); return await SignInAsync(context, accounts, "admin");
+    await accounts.EnsureInitialOwnerAsync(context.RequestAborted); await audit.WriteAsync("setup","user",null,"success",null,context.RequestAborted); return await SignInAsync(context, accounts, "admin");
 }).RequireRateLimiting("login");
 auth.MapPost("/login", async (LoginRequest request, HttpContext context, SetupCodeService service, AccountService accounts, AuditService audit) =>
 {
@@ -110,8 +111,8 @@ auth.MapPost("/password", async (ChangePasswordRequest request, SetupCodeService
     var uid = context.User.FindFirstValue("uid");
     var username = context.User.Identity?.Name;
     var verified = uid is not null && username is not null && (await accounts.VerifyAsync(username, request.CurrentPassword, context.RequestAborted)) is not null;
-    if (!verified || request.NewPassword.Length < 12 || uid is null || !await accounts.ChangePasswordAsync(uid, request.NewPassword, context.RequestAborted))
-        return Results.BadRequest(new { error = "Current password is incorrect or the new password is shorter than 12 characters." });
+    if (!verified || request.NewPassword.Length < 8 || uid is null || !await accounts.ChangePasswordAsync(uid, request.NewPassword, context.RequestAborted))
+        return Results.BadRequest(new { error = "Current password is incorrect or the new password is shorter than 8 characters." });
     await audit.WriteAsync("password_change","user",uid,"success",uid,context.RequestAborted); return Results.NoContent();
 }).RequireAuthorization().AddEndpointFilter(CsrfFilter.Validate);
 
@@ -128,6 +129,20 @@ api.AddEndpointFilter((EndpointFilterInvocationContext context, EndpointFilterDe
     AuditAndAuthorizeMutationAsync(context, next));
 api.MapGet("/status", async (ServerSupervisor supervisor) => Results.Ok(await supervisor.GetStatusAsync()));
 api.MapGet("/settings", async (StateStore state, HttpContext context) => Results.Ok(await state.GetAsync<ServerSettings>("settings", context.RequestAborted)));
+api.MapGet("/factorio-credentials/status", async (SecretStore secrets, HttpContext context) =>
+{
+    var configured = await secrets.ReadAsync(context.RequestAborted);
+    return Results.Ok(new { configured = !string.IsNullOrWhiteSpace(configured.FactorioUsername) && !string.IsNullOrWhiteSpace(configured.FactorioToken) });
+});
+api.MapPut("/factorio-credentials", async (FactorioCredentialsRequest request, SecretStore secrets, HttpContext context) =>
+{
+    var username = request.Username?.Trim();
+    var token = request.Token?.Trim();
+    if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(token) || username.Length > 256 || token.Length > 512)
+        return Results.BadRequest(new { error = "Enter a valid Factorio username and token." });
+    await secrets.WriteAsync(new SecretSettings(username, token), context.RequestAborted);
+    return Results.NoContent();
+});
 api.MapPut("/settings", async (ServerSettings settings, StateStore state, ServerSupervisor supervisor, HttpContext context) =>
 {
     if (supervisor.IsRunning)
@@ -215,13 +230,22 @@ api.MapDelete("/backups/{backupId}", async (string backupId, BackupService backu
 });
 
 api.MapGet("/versions", (VersionService versions) => Results.Ok(versions.GetCachedVersions()));
-api.MapGet("/versions/catalog", async (VersionService versions, HttpContext context) => Results.Ok(await versions.GetCatalogAsync(context.RequestAborted)));
-api.MapGet("/updates", async (VersionService versions, HttpContext context) => Results.Ok(await versions.GetUpdateStatusAsync(context.RequestAborted)));
+api.MapGet("/versions/catalog", async (VersionService versions, HttpContext context) =>
+{
+    try { return (IResult)Results.Ok(await versions.GetCatalogAsync(context.RequestAborted)); }
+    catch (HttpRequestException exception) { return (IResult)Results.Json(new { error = exception.Message }, statusCode: StatusCodes.Status502BadGateway); }
+});
+api.MapGet("/updates", async (VersionService versions, HttpContext context) =>
+{
+    var status = await versions.GetUpdateStatusAsync(context.RequestAborted);
+    return status is null ? Results.Json(null) : Results.Ok(status);
+});
 api.MapPost("/updates/check", async (VersionService versions, HttpContext context) => Results.Ok(await versions.CheckForUpdateAsync(context.RequestAborted)));
 api.MapPost("/versions/download/{channel}/{version}", async (string channel, string version, VersionService versions, HttpContext context) =>
 {
-    try { return Results.Ok(await versions.DownloadAsync(channel, version, context.RequestAborted)); }
-    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    try { return (IResult)Results.Ok(await versions.DownloadAsync(channel, version, context.RequestAborted)); }
+    catch (InvalidOperationException exception) { return (IResult)Results.BadRequest(new { error = exception.Message }); }
+    catch (HttpRequestException exception) { return (IResult)Results.Json(new { error = exception.Message }, statusCode: StatusCodes.Status502BadGateway); }
 });
 api.MapPost("/versions/apply", async (VersionApplyRequest request, VersionService versions, HttpContext context) =>
 {
@@ -230,7 +254,12 @@ api.MapPost("/versions/apply", async (VersionApplyRequest request, VersionServic
 });
 
 api.MapGet("/mods", async (ModService mods, HttpContext context) => Results.Ok(await mods.ListAsync(context.RequestAborted)));
-api.MapGet("/mods/search", async (string query, ModService mods, HttpContext context) => Results.Ok(await mods.SearchAsync(query, context.RequestAborted)));
+api.MapGet("/mods/search", async (string query, ModService mods, HttpContext context) =>
+{
+    try { return (IResult)Results.Ok(await mods.SearchAsync(query, context.RequestAborted)); }
+    catch (InvalidOperationException exception) { return (IResult)Results.BadRequest(new { error = exception.Message }); }
+    catch (HttpRequestException exception) { return (IResult)Results.Json(new { error = exception.Message }, statusCode: StatusCodes.Status502BadGateway); }
+});
 api.MapGet("/mods/recovery", async (ModService mods, HttpContext context) => Results.Ok(await mods.GetRecoveryStatusAsync(context.RequestAborted)));
 api.MapPost("/mods/preflight", async (ModPreflightRequest request, ModService mods, HttpContext context) => Results.Ok(await mods.PreflightAsync(request, context.RequestAborted)));
 api.MapPost("/mods/install", async (ModInstallRequest request, ModService mods, HttpContext context) =>

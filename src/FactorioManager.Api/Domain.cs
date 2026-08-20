@@ -65,6 +65,7 @@ public sealed record SetupRequest(string Code, string Password, string? Factorio
 public sealed record LoginRequest(string Password, string? Username = null);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record SecretSettings(string? FactorioUsername, string? FactorioToken);
+public sealed record FactorioCredentialsRequest(string Username, string Token);
 public enum ModSource { Portal, Local }
 public sealed record ModEntry(
     string Name,

@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -10,8 +11,10 @@ public sealed class ModService(
     StateStore store,
     IHttpClientFactory? clients,
     ServerSupervisor supervisor,
-    BackupService? backups = null)
+    BackupService? backups = null,
+    SecretStore? secrets = null)
 {
+    private const string ModPortalBaseUrl = "https://mods.factorio.com";
     private const long MaxArchiveBytes = 512L * 1024 * 1024;
     private const long MaxExpandedBytes = 2L * 1024 * 1024 * 1024;
     private const int MaxArchiveEntries = 20_000;
@@ -47,10 +50,31 @@ public sealed class ModService(
     public async Task<JsonElement> SearchAsync(string query, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(query) || query.Length > 100) throw new InvalidOperationException("Enter a mod search term up to 100 characters.");
-        using var response = await Client().GetAsync($"https://mods.factorio.com/api/mods?query={Uri.EscapeDataString(query)}&page_size=20", ct);
-        response.EnsureSuccessStatusCode();
+        var settings = await store.GetAsync<ServerSettings>("settings", ct) ?? new ServerSettings();
+        var payload = new Dictionary<string, object?>
+        {
+            ["query"] = query.Trim(),
+            ["page_size"] = 20,
+            ["sort_attribute"] = "relevancy"
+        };
+        if (!string.IsNullOrWhiteSpace(settings.ActiveVersion)) payload["version"] = settings.ActiveVersion;
+        if (secrets is not null)
+        {
+            var credentials = await secrets.ReadAsync(ct);
+            if (!string.IsNullOrWhiteSpace(credentials.FactorioUsername) && !string.IsNullOrWhiteSpace(credentials.FactorioToken))
+            {
+                payload["username"] = credentials.FactorioUsername;
+                payload["token"] = credentials.FactorioToken;
+            }
+        }
+
+        using var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var response = await Client().PostAsync($"{ModPortalBaseUrl}/api/search", content, ct);
+        await EnsureRemoteSuccessAsync(response, "Mod Portal search");
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("results", out var results) || results.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException("Mod Portal returned an invalid search response.");
         return document.RootElement.Clone();
     }
 
@@ -478,7 +502,7 @@ public sealed class ModService(
     {
         ValidateName(name);
         using var response = await Client().GetAsync($"https://mods.factorio.com/api/mods/{Uri.EscapeDataString(name)}", ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureRemoteSuccessAsync(response, "Mod Portal lookup");
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
         if (!document.RootElement.TryGetProperty("latest_release", out var release)) return (null, null);
@@ -490,16 +514,42 @@ public sealed class ModService(
 
     private async Task<string> DownloadAsync(string url, TransactionManifest transaction, CancellationToken ct)
     {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || !uri.Host.Equals("mods.factorio.com", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Untrusted Mod Portal download URL.");
+        if (!Uri.TryCreate(url, UriKind.RelativeOrAbsolute, out var parsed)) throw new InvalidOperationException("The Mod Portal returned an invalid download URL.");
+        var uri = parsed.IsAbsoluteUri ? parsed : new Uri(new Uri(ModPortalBaseUrl), url);
+        if (uri.Scheme != Uri.UriSchemeHttps || !uri.Host.Equals("mods.factorio.com", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Untrusted Mod Portal download URL.");
+        if (secrets is null) throw new InvalidOperationException("Configure a Factorio account and token during setup before installing Mod Portal mods.");
+        var credentials = await secrets.ReadAsync(ct);
+        if (string.IsNullOrWhiteSpace(credentials.FactorioUsername) || string.IsNullOrWhiteSpace(credentials.FactorioToken))
+            throw new InvalidOperationException("Configure a Factorio account and token during setup before installing Mod Portal mods.");
+        var query = uri.Query.TrimStart('?');
+        var authQuery = $"username={Uri.EscapeDataString(credentials.FactorioUsername)}&token={Uri.EscapeDataString(credentials.FactorioToken)}";
+        uri = new UriBuilder(uri) { Query = string.IsNullOrWhiteSpace(query) ? authQuery : $"{query}&{authQuery}" }.Uri;
         var path = Path.Combine(transaction.BackupDirectory, "staging", Guid.NewGuid().ToString("N") + ".zip");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         using var response = await Client().GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureRemoteSuccessAsync(response, "Mod Portal download");
+        if (response.Content.Headers.ContentType?.MediaType?.Contains("html", StringComparison.OrdinalIgnoreCase) == true)
+            throw new InvalidOperationException("Mod Portal returned a login page instead of a mod archive. Check the Factorio credentials.");
         if (response.Content.Headers.ContentLength > MaxArchiveBytes) throw new InvalidOperationException("The mod archive exceeds the 512 MB limit.");
         await using var source = await response.Content.ReadAsStreamAsync(ct);
         await using var destination = File.Create(path);
         await CopyLimitedAsync(source, destination, MaxArchiveBytes, ct);
         return path;
+    }
+
+    private static async Task EnsureRemoteSuccessAsync(HttpResponseMessage response, string operation)
+    {
+        if (response.IsSuccessStatusCode) return;
+        var detail = await response.Content.ReadAsStringAsync();
+        string? message = null;
+        try
+        {
+            using var document = JsonDocument.Parse(detail);
+            if (document.RootElement.TryGetProperty("message", out var property)) message = property.GetString();
+            if (document.RootElement.TryGetProperty("error", out property)) message ??= property.GetString();
+        }
+        catch (JsonException) { }
+        throw new HttpRequestException($"{operation} failed with HTTP {(int)response.StatusCode}{(string.IsNullOrWhiteSpace(message) ? "." : $": {message}")}", null, response.StatusCode);
     }
 
     private static async Task<ModMetadata> ReadMetadataAsync(string path, CancellationToken ct)

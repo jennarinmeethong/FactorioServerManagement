@@ -5,14 +5,54 @@ namespace FactorioManager.Api;
 
 public sealed class AccountService(StateStore state)
 {
+    public async Task EnsureInitialOwnerAsync(CancellationToken ct = default)
+    {
+        // A persisted admin row can predate the role migration and still be viewer.
+        // Only the canonical bootstrap username is eligible for this repair, and it
+        // is promoted only when the database has no owner yet.
+        if (await state.GetAsync<string>("admin_password", ct) is null)
+            return;
+
+        await using var connection = state.OpenConnection();
+        await connection.OpenAsync(ct);
+        var ownerCheck = connection.CreateCommand();
+        ownerCheck.CommandText = "SELECT 1 FROM users WHERE role='owner' LIMIT 1";
+        if (await ownerCheck.ExecuteScalarAsync(ct) is not null)
+            return;
+
+        var adminLookup = connection.CreateCommand();
+        adminLookup.CommandText = "SELECT id FROM users WHERE username='admin' LIMIT 1";
+        var adminId = await adminLookup.ExecuteScalarAsync(ct) as string;
+        var now = DateTimeOffset.UtcNow.ToString("O");
+        if (adminId is not null)
+        {
+            var promote = connection.CreateCommand();
+            promote.CommandText = "UPDATE users SET role='owner', security_stamp=$stamp, updated_at_utc=$now WHERE id=$id";
+            promote.Parameters.AddWithValue("$stamp", Guid.NewGuid().ToString("N"));
+            promote.Parameters.AddWithValue("$now", now);
+            promote.Parameters.AddWithValue("$id", adminId);
+            await promote.ExecuteNonQueryAsync(ct);
+            return;
+        }
+
+        var hash = await state.GetAsync<string>("admin_password", ct);
+        var insert = connection.CreateCommand();
+        insert.CommandText = "INSERT INTO users(id,username,password_hash,role,security_stamp,created_at_utc,updated_at_utc) VALUES($id,'admin',$hash,'owner',$stamp,$now,$now)";
+        insert.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+        insert.Parameters.AddWithValue("$hash", hash);
+        insert.Parameters.AddWithValue("$stamp", Guid.NewGuid().ToString("N"));
+        insert.Parameters.AddWithValue("$now", now);
+        await insert.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task EnsureOwnerFromLegacyAsync(CancellationToken ct=default) { var existing=await FindByUsernameAsync("admin",ct); if(existing is not null)return; var hash=await state.GetAsync<string>("admin_password",ct); if(hash is null)return; await using var c=state.OpenConnection(); await c.OpenAsync(ct); var now=DateTimeOffset.UtcNow.ToString("O"); var q=c.CreateCommand(); q.CommandText="INSERT INTO users(id,username,password_hash,role,security_stamp,created_at_utc,updated_at_utc) VALUES($id,'admin',$hash,'owner',$stamp,$now,$now)";q.Parameters.AddWithValue("$id",Guid.NewGuid().ToString("N"));q.Parameters.AddWithValue("$hash",hash);q.Parameters.AddWithValue("$stamp",Guid.NewGuid().ToString("N"));q.Parameters.AddWithValue("$now",now);await q.ExecuteNonQueryAsync(ct); }
     public async Task<UserRecord?> FindAsync(string id, CancellationToken ct = default) { await using var c = state.OpenConnection(); await c.OpenAsync(ct); var q=c.CreateCommand(); q.CommandText="SELECT id,username,role,security_stamp,created_at_utc,updated_at_utc FROM users WHERE id=$id"; q.Parameters.AddWithValue("$id",id); await using var r=await q.ExecuteReaderAsync(ct); return await r.ReadAsync(ct)? Read(r):null; }
     public async Task<UserRecord?> FindByUsernameAsync(string username, CancellationToken ct = default) { await using var c=state.OpenConnection(); await c.OpenAsync(ct); var q=c.CreateCommand(); q.CommandText="SELECT id,username,role,security_stamp,created_at_utc,updated_at_utc FROM users WHERE username=$name"; q.Parameters.AddWithValue("$name",username); await using var r=await q.ExecuteReaderAsync(ct); return await r.ReadAsync(ct)? Read(r):null; }
-    public async Task<(UserRecord User,string Hash)?> VerifyAsync(string username,string password,CancellationToken ct=default) { await using var c=state.OpenConnection(); await c.OpenAsync(ct); var q=c.CreateCommand(); q.CommandText="SELECT id,username,role,security_stamp,created_at_utc,updated_at_utc,password_hash FROM users WHERE username=$name"; q.Parameters.AddWithValue("$name",username); await using var r=await q.ExecuteReaderAsync(ct); if(!await r.ReadAsync(ct)) return null; var hash=r.GetString(6); return BCrypt.Net.BCrypt.Verify(password,hash)?(Read(r),hash):null; }
+    public async Task<(UserRecord User,string Hash)?> VerifyAsync(string username,string password,CancellationToken ct=default) { if (password.Length < 8) return null; await using var c=state.OpenConnection(); await c.OpenAsync(ct); var q=c.CreateCommand(); q.CommandText="SELECT id,username,role,security_stamp,created_at_utc,updated_at_utc,password_hash FROM users WHERE username=$name"; q.Parameters.AddWithValue("$name",username); await using var r=await q.ExecuteReaderAsync(ct); if(!await r.ReadAsync(ct)) return null; var hash=r.GetString(6); return BCrypt.Net.BCrypt.Verify(password,hash)?(Read(r),hash):null; }
     public async Task<List<UserRecord>> ListAsync(CancellationToken ct=default) { await using var c=state.OpenConnection(); await c.OpenAsync(ct); var q=c.CreateCommand(); q.CommandText="SELECT id,username,role,security_stamp,created_at_utc,updated_at_utc FROM users ORDER BY username"; await using var r=await q.ExecuteReaderAsync(ct); var list=new List<UserRecord>(); while(await r.ReadAsync(ct)) list.Add(Read(r)); return list; }
-    public async Task<UserRecord> CreateAsync(string username,string password,UserRole role,CancellationToken ct=default) { if(username.Length<1||password.Length<12||role==UserRole.Owner) throw new InvalidOperationException("Invalid account."); var id=Guid.NewGuid().ToString("N"); var stamp=Guid.NewGuid().ToString("N"); var now=DateTimeOffset.UtcNow; await using var c=state.OpenConnection(); await c.OpenAsync(ct); var q=c.CreateCommand(); q.CommandText="INSERT INTO users(id,username,password_hash,role,security_stamp,created_at_utc,updated_at_utc) VALUES($id,$name,$hash,$role,$stamp,$now,$now)"; q.Parameters.AddWithValue("$id",id);q.Parameters.AddWithValue("$name",username);q.Parameters.AddWithValue("$hash",BCrypt.Net.BCrypt.HashPassword(password));q.Parameters.AddWithValue("$role",Role(role));q.Parameters.AddWithValue("$stamp",stamp);q.Parameters.AddWithValue("$now",now.ToString("O")); await q.ExecuteNonQueryAsync(ct); return new(id,username,role,stamp,now,now); }
+    public async Task<UserRecord> CreateAsync(string username,string password,UserRole role,CancellationToken ct=default) { if(username.Length<1||password.Length<8||role==UserRole.Owner) throw new InvalidOperationException("Invalid account."); var id=Guid.NewGuid().ToString("N"); var stamp=Guid.NewGuid().ToString("N"); var now=DateTimeOffset.UtcNow; await using var c=state.OpenConnection(); await c.OpenAsync(ct); var q=c.CreateCommand(); q.CommandText="INSERT INTO users(id,username,password_hash,role,security_stamp,created_at_utc,updated_at_utc) VALUES($id,$name,$hash,$role,$stamp,$now,$now)"; q.Parameters.AddWithValue("$id",id);q.Parameters.AddWithValue("$name",username);q.Parameters.AddWithValue("$hash",BCrypt.Net.BCrypt.HashPassword(password));q.Parameters.AddWithValue("$role",Role(role));q.Parameters.AddWithValue("$stamp",stamp);q.Parameters.AddWithValue("$now",now.ToString("O")); await q.ExecuteNonQueryAsync(ct); return new(id,username,role,stamp,now,now); }
     public async Task<bool> UpdateRoleAsync(string id,UserRole role,CancellationToken ct=default) { if(role==UserRole.Owner)return false; return await UpdateAsync(id,"role",Role(role),true,ct); }
-    public async Task<bool> ChangePasswordAsync(string id,string password,CancellationToken ct=default) { if(password.Length<12)return false; return await UpdateAsync(id,"password_hash",BCrypt.Net.BCrypt.HashPassword(password),true,ct); }
+    public async Task<bool> ChangePasswordAsync(string id,string password,CancellationToken ct=default) { if(password.Length<8)return false; return await UpdateAsync(id,"password_hash",BCrypt.Net.BCrypt.HashPassword(password),true,ct); }
     public async Task<bool> DeleteAsync(string id,CancellationToken ct=default) { await using var c=state.OpenConnection(); await c.OpenAsync(ct); var q=c.CreateCommand(); q.CommandText="DELETE FROM users WHERE id=$id AND role<>'owner'"; q.Parameters.AddWithValue("$id",id); return await q.ExecuteNonQueryAsync(ct)>0; }
     private async Task<bool> UpdateAsync(string id,string field,string value,bool stamp,CancellationToken ct){ await using var c=state.OpenConnection(); await c.OpenAsync(ct); var q=c.CreateCommand(); q.CommandText=$"UPDATE users SET {field}=$value, security_stamp=CASE WHEN $stamp=1 THEN $new ELSE security_stamp END, updated_at_utc=$now WHERE id=$id AND role<>'owner'"; q.Parameters.AddWithValue("$value",value);q.Parameters.AddWithValue("$stamp",stamp?1:0);q.Parameters.AddWithValue("$new",Guid.NewGuid().ToString("N"));q.Parameters.AddWithValue("$now",DateTimeOffset.UtcNow.ToString("O"));q.Parameters.AddWithValue("$id",id); return await q.ExecuteNonQueryAsync(ct)>0; }
     private static string Role(UserRole r)=>r.ToString().ToLowerInvariant();
