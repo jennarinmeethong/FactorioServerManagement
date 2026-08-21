@@ -1,9 +1,9 @@
 # Task Ledger: implement-factorio-manager
 
-- Status: `in_progress`
+- Status: `completed`
 - Project IDs: [factorio-server-management]
 - Session ID / attempt: 20260816-codex / 1
-- Memory revision: 36
+- Memory revision: 38
 - Memory root reference: C:\Codes\FactorioServerManagement\.devbuddy
 
 ## Slices, locks, and records
@@ -20,7 +20,8 @@
 ## Milestone progress
 - Milestone 1 `completed`: RBAC, owner/admin/viewer authorization, audit events, account/audit dashboard UI, CSRF and secret-disclosure QA.
 - Milestone 2 `completed`: live player/RCON, save/backup lifecycle, and mod management expansion completed and QA-passed with 16 backend tests.
-- Milestone 3 `next`: scheduled automation, monitoring/alerts, and operational history.
+- Milestone 3 `completed`: scheduled automation, approval-gated manual workflows, bounded maintenance/server histories, health chart, crash/restart history, and Discord/Telegram failure alerts.
+- Milestone 4 `completed`: CI/test/image pipeline, semver-tagged release version propagation, configuration export/import, and actionable reverse-proxy/TLS operations documentation.
 
 ## Audit references
 
@@ -135,3 +136,12 @@
 
 ## Canonical commits
 - revision 36: Complete Saves lifecycle and make manual backup errors actionable
+
+## Canonical commits
+- revision 37: Accepted architect Milestone 4 acceptance audit; route CI/image/release-versioning and reverse-proxy/TLS documentation slice.
+
+## Canonical commits
+- revision 38: Accepted Milestone 4 implementation and independent QA: semver-tagged CI/image builds, APP_VERSION propagation, Caddy/Nginx/TLS/SignalR/UDP guidance, 47/47 backend tests, frontend build, Docker image build, healthy Compose service, and HTTP 200 /health verification. Milestones 3 and 4 are complete.
+
+## Canonical commits
+- revision 38: Closed Milestones 3 and 4 after developer implementation, independent QA, Docker image build, healthy Compose service, and HTTP 200 health verification.

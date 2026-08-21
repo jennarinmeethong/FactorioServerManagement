@@ -152,18 +152,42 @@ bun run dev</code></pre>
     <p>Vite จะ proxy <code>/api</code> และ <code>/hubs</code> ไปยัง backend; หากรันนอก Docker ให้กำหนด <code>DataRoot</code> เป็นโฟลเดอร์ข้อมูลแยกต่างหาก</p>
   </section>
 
-  <footer>อ้างอิงจาก Dockerfile, compose.yaml และ README ของ Factorio Server Manager</footer>
-</main>
-    <h2>Reverse proxy and TLS</h2>
-    <p>Keep the manager bound to localhost and terminate TLS at a reverse proxy. The proxy must forward the
-      <code>/hubs/status</code> WebSocket endpoint as well as <code>/api</code>.</p>
+  <section aria-labelledby="proxy-heading">
+    <h2 id="proxy-heading">Reverse proxy และ TLS</h2>
+    <p>คงการ bind ของ Compose เป็น <code>127.0.0.1:8080:8080</code> และให้ reverse proxy อยู่บน host เดียวกัน เพื่อไม่เปิด dashboard ตรงออกอินเทอร์เน็ต ต้อง forward ทั้ง <code>/api</code> และ SignalR WebSocket ที่ <code>/hubs/status</code></p>
+    <h3>Caddy</h3>
+    <p>Caddy ขอและต่ออายุ certificate ให้โดยอัตโนมัติเมื่อ DNS ชี้มาที่ host และ firewall อนุญาต TCP 80/443:</p>
     <pre><code>manager.example.com {
   reverse_proxy 127.0.0.1:8080
 }</code></pre>
-    <p>For Nginx, use <code>proxy_http_version 1.1</code>, forward the
-      <code>Upgrade</code> and <code>Connection</code> headers, and set a long read timeout for SignalR.
-      Do not expose port <code>34197</code> through the HTTP proxy; it is the separate UDP game port.</p>
-    <p>Use a trusted certificate authority, rotate certificates automatically, and restrict the upstream
-      firewall rule to the proxy host. Never place Factorio or notification tokens in this document.</p>
+    <h3>Nginx</h3>
+    <p>วาง <code>map</code> ในระดับ <code>http</code> ของ Nginx และใช้ค่าเหล่านี้ใน virtual host เพื่อรองรับ SignalR WebSocket:</p>
+    <pre><code>map $http_upgrade $connection_upgrade {
+  default upgrade;
+  '' close;
+}
+
+server {
+  listen 443 ssl;
+  server_name manager.example.com;
+  ssl_certificate /etc/letsencrypt/live/manager.example.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/manager.example.com/privkey.pem;
+
+  location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_read_timeout 3600s;
+  }
+}</code></pre>
+    <p>ใช้ certificate จาก CA ที่เชื่อถือได้ ต่ออายุ certificate อัตโนมัติ และจำกัด firewall ของ TCP 8080 ให้รับจาก localhost/proxy เท่านั้น เปิด TCP 80/443 ตามที่จำเป็น และอย่าส่ง <code>34197/udp</code> ผ่าน HTTP proxy เพราะเป็น game port แยกต่างหาก ต้องเปิดและจำกัด firewall แยกจาก dashboard</p>
+    <div class="note">ห้ามใส่ Factorio token, notification token หรือ secret ใด ๆ ในไฟล์เอกสารหรือ configuration ที่ commit เข้า Git</div>
+  </section>
+
+  <footer>อ้างอิงจาก Dockerfile, compose.yaml และ README ของ Factorio Server Manager</footer>
+</main>
 </body>
 </html>

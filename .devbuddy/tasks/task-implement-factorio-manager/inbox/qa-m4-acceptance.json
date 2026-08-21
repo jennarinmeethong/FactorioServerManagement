@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "qa-m4-acceptance",
+  "attempt": 1,
+  "parent_revision": 37,
+  "role": "qa",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Independent QA passed the Milestone 4 acceptance checks and the full existing regression suite; Docker was blocked inside the QA sandbox but passed from the host verification path.",
+  "evidence": [
+    {"ref": "dotnet test --no-restore", "outcome": "47/47 tests passed."},
+    {"ref": "bun run --cwd src/FactorioManager.Web build", "outcome": "Frontend TypeScript/Vite production build passed; only non-fatal third-party SignalR annotation warnings appeared."},
+    {"ref": "git diff --check", "outcome": "No whitespace errors."},
+    {"ref": ".github/workflows/ci.yml; Dockerfile", "outcome": "Semver tag validation, APP_VERSION propagation, image tags, and push=false structural checks passed."},
+    {"ref": "README.md; docs/docker-guide.html", "outcome": "Caddy/Nginx, SignalR WebSocket, TLS, firewall, localhost binding, and UDP separation guidance is present."},
+    {"ref": "docker compose build factorio-manager; docker compose ps; GET /health", "outcome": "Host verification built the image, recreated the service healthy, and /health returned HTTP 200 with stopped state."}
+  ],
+  "next_slice": {
+    "summary": "Reconcile the task ledger: mark Milestones 3 and 4 completed, record acceptance evidence, validate task/knowledge health, and close the task.",
+    "read_paths": [".devbuddy/tasks/task-implement-factorio-manager.md", ".devbuddy/tasks/task-implement-factorio-manager/records", ".github/workflows/ci.yml", "Dockerfile", "README.md", "docs/docker-guide.html"],
+    "read_keys": ["milestone-3-acceptance", "milestone-4-acceptance", "ci-image-pipeline", "release-versioning", "reverse-proxy-tls"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

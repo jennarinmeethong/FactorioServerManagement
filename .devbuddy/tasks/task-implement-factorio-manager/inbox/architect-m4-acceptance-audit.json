@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "architect-m4-acceptance-audit",
+  "attempt": 1,
+  "parent_revision": 36,
+  "role": "architect",
+  "model": "gpt-5.6-terra",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Milestone 3 implementation is present. Milestone 4 acceptance requires evidence review for CI/test/image pipeline, release versioning, and reverse-proxy/TLS documentation; the task ledger also needs milestone reconciliation.",
+  "evidence": [
+    {"ref": "src/FactorioManager.Api/Program.cs", "outcome": "Scheduled maintenance, approval gates, history, health, and notification endpoints are present."},
+    {"ref": "src/FactorioManager.Api/MaintenanceWorker.cs", "outcome": "Scheduled backup, update-check, restart, health history, and failure notification flows are present."},
+    {"ref": "src/FactorioManager.Web/src/App.tsx", "outcome": "Automation, health chart, maintenance history, crash/restart history, and notification UI are present."},
+    {"ref": "Directory.Build.props; .github/workflows/ci.yml; docs/docker-guide.html", "outcome": "Milestone 4 artifacts exist but require final verification and release/versioning acceptance review."}
+  ],
+  "next_slice": {
+    "summary": "Audit and complete Milestone 4 acceptance evidence for CI/image/release versioning and operations documentation, then reconcile Milestone 3 ledger status.",
+    "read_paths": ["Directory.Build.props", ".github/workflows/ci.yml", "Dockerfile", "compose.yaml", "README.md", "docs/docker-guide.html"],
+    "read_keys": ["milestone-4-acceptance", "ci-image-pipeline", "release-versioning", "reverse-proxy-tls"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

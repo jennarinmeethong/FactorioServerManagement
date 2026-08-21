@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "developer-m4-release-docs",
+  "attempt": 1,
+  "parent_revision": 37,
+  "role": "developer",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Completed Milestone 4 acceptance implementation for semver-tagged CI/image builds and actionable reverse-proxy/TLS operations documentation without registry push or secret changes.",
+  "evidence": [
+    {"ref": ".github/workflows/ci.yml", "outcome": "Validates vMAJOR.MINOR.PATCH tags, passes version into tests/image builds, and emits commit/version image tags without push."},
+    {"ref": "Dockerfile", "outcome": "Accepts APP_VERSION and publishes the API with reproducible assembly version metadata."},
+    {"ref": "README.md", "outcome": "Documents Caddy automatic HTTPS, Nginx WebSocket forwarding, localhost binding, firewall, and UDP separation."},
+    {"ref": "docs/docker-guide.html", "outcome": "Adds localized actionable Caddy/Nginx/TLS operations guidance and keeps secrets out of documentation."},
+    {"ref": "git diff --check", "outcome": "No whitespace errors in the changed files."}
+  ],
+  "next_slice": {
+    "summary": "Run independent QA for CI/versioning/docs, then build the Docker image and verify container health when Docker is available.",
+    "read_paths": [".github/workflows/ci.yml", "Dockerfile", "Directory.Build.props", "README.md", "docs/docker-guide.html", "tests/FactorioManager.Api.Tests"],
+    "read_keys": ["milestone-4-acceptance", "ci-image-pipeline", "release-versioning", "reverse-proxy-tls"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": ["The developer environment reported local Docker/Bun availability limitations; QA should retry with the current workspace runtime."],
+  "required_approval": null
+}
