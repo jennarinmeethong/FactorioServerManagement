@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.IO.Compression;
 using System.Threading.RateLimiting;
 using FactorioManager.Api;
 using Microsoft.AspNetCore.Authentication;
@@ -7,6 +8,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.ConfigureHttpJsonOptions(options => ApiJsonOptions.Configure(options.SerializerOptions));
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(options => options.SingleLine = true);
 var dataPaths = new DataPaths(builder.Configuration);
@@ -21,19 +23,25 @@ builder.Services.AddSingleton<AuditService>();
 builder.Services.AddSingleton<ServerSupervisor>();
 builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton<VersionService>();
+builder.Services.AddSingleton<MaintenanceHistoryService>();
+builder.Services.AddSingleton<ServerEventHistoryService>();
 builder.Services.AddSingleton<ModService>();
 builder.Services.AddSingleton<PlayerListService>();
 builder.Services.AddSingleton<SourceRconClient>();
 builder.Services.AddSingleton<LivePlayerService>();
 builder.Services.AddSingleton<SystemHealthService>();
+builder.Services.AddSingleton<HealthHistoryService>();
 builder.Services.AddSingleton<MaintenanceStatusService>();
+builder.Services.AddSingleton<NotificationService>();
 builder.Services.AddHostedService<MaintenanceWorker>();
 builder.Services.AddHttpClient();
 builder.Services.AddSignalR();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
-        options.Cookie.Name = "factorio_manager_v2";
+        // Bump the cookie name after the RBAC bootstrap migration so a browser
+        // cannot keep presenting a role claim issued by an older build.
+        options.Cookie.Name = "factorio_manager_v3";
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Strict;
         options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
@@ -46,8 +54,12 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         {
             var uid = context.Principal?.FindFirstValue("uid");
             var stamp = context.Principal?.FindFirstValue("security_stamp");
+            var role = context.Principal?.FindFirstValue("role");
             var account = uid is null ? null : await context.HttpContext.RequestServices.GetRequiredService<AccountService>().FindAsync(uid, context.HttpContext.RequestAborted);
-            if (account is null || !string.Equals(stamp, account.SecurityStamp, StringComparison.Ordinal)) context.RejectPrincipal();
+            if (account is null ||
+                !string.Equals(stamp, account.SecurityStamp, StringComparison.Ordinal) ||
+                !string.Equals(role, account.Role.ToString(), StringComparison.OrdinalIgnoreCase))
+                context.RejectPrincipal();
         };
     });
 builder.Services.AddAuthorization(options => options.AddPolicy("owner", p => p.RequireClaim("role", "owner")));
@@ -89,9 +101,17 @@ var auth = app.MapGroup("/api/auth");
 auth.MapGet("/status", async (SetupCodeService service) => Results.Ok(new { configured = await service.IsConfiguredAsync() }));
 auth.MapPost("/setup", async (SetupRequest request, HttpContext context, SetupCodeService service, SecretStore secrets, AccountService accounts, AuditService audit) =>
 {
+    var factorioUsername = request.FactorioUsername?.Trim();
+    var factorioToken = request.FactorioToken?.Trim();
+    var hasFactorioUsername = !string.IsNullOrWhiteSpace(factorioUsername);
+    var hasFactorioToken = !string.IsNullOrWhiteSpace(factorioToken);
+    if (hasFactorioUsername != hasFactorioToken)
+        return Results.BadRequest(new { error = "Enter both the Factorio username and token, or leave both empty." });
+    if (factorioUsername?.Length > 256 || factorioToken?.Length > 512)
+        return Results.BadRequest(new { error = "The Factorio username or token is too long." });
     if (!await service.TryConfigureAsync(request.Code, request.Password, context.RequestAborted))
         return Results.BadRequest(new { error = "Setup is unavailable, the code is invalid, or the password is too short." });
-    await secrets.WriteAsync(new SecretSettings(request.FactorioUsername, request.FactorioToken), context.RequestAborted);
+    await secrets.WriteAsync(new SecretSettings(factorioUsername, factorioToken), context.RequestAborted);
     await accounts.EnsureInitialOwnerAsync(context.RequestAborted); await audit.WriteAsync("setup","user",null,"success",null,context.RequestAborted); return await SignInAsync(context, accounts, "admin");
 }).RequireRateLimiting("login");
 auth.MapPost("/login", async (LoginRequest request, HttpContext context, SetupCodeService service, AccountService accounts, AuditService audit) =>
@@ -123,6 +143,56 @@ owner.MapPatch("/users/{id}/role", async (string id, ChangeRoleRequest r, Accoun
 owner.MapPost("/users/{id}/password", async (string id, UserPasswordRequest r, AccountService a, AuditService audit, HttpContext c) => { var ok=await a.ChangePasswordAsync(id,r.Password,c.RequestAborted); await audit.WriteAsync("password_change","user",id,ok?"success":"failure",c.User.FindFirstValue("uid"),c.RequestAborted); return (IResult)(ok?Results.NoContent():Results.BadRequest()); }).AddEndpointFilter(CsrfFilter.Validate);
 owner.MapDelete("/users/{id}", async (string id, AccountService a, AuditService audit, HttpContext c) => { if(id==c.User.FindFirstValue("uid")) return (IResult)Results.BadRequest(); var ok=await a.DeleteAsync(id,c.RequestAborted); await audit.WriteAsync("user_delete","user",id,ok?"success":"failure",c.User.FindFirstValue("uid"),c.RequestAborted); return (IResult)(ok?Results.NoContent():Results.BadRequest()); }).AddEndpointFilter(CsrfFilter.Validate);
 owner.MapGet("/audit-events", async (long? beforeId, int? limit, AuditService a, CancellationToken ct) => Results.Ok(await a.ListAsync(beforeId,limit??50,ct)));
+owner.MapGet("/notification-settings", async (NotificationService notifications, CancellationToken ct) => Results.Ok(await notifications.GetStatusAsync(ct)));
+owner.MapPut("/notification-settings", async (NotificationSettingsRequest request, StateStore state, SecretStore secrets, HttpContext context) =>
+{
+    if (request.DiscordWebhookUrl?.Length > 2048 || request.TelegramBotToken?.Length > 512 || request.TelegramChatId?.Length > 256)
+        return Results.BadRequest(new { error = "Notification settings are too long." });
+    if (!string.IsNullOrWhiteSpace(request.DiscordWebhookUrl) &&
+        (!Uri.TryCreate(request.DiscordWebhookUrl, UriKind.Absolute, out var webhook) ||
+         (webhook.Scheme is not ("http" or "https"))))
+        return Results.BadRequest(new { error = "Discord webhook URL must be an absolute HTTP or HTTPS URL." });
+    // Empty fields are intentionally treated as "keep the current secret".
+    // This lets the UI avoid echoing credentials while still allowing an
+    // explicit clear through a separate, future operation.
+    await secrets.UpdateNotificationsAsync(request.DiscordWebhookUrl, request.TelegramBotToken, request.TelegramChatId, context.RequestAborted);
+    var saved = await secrets.ReadAsync(context.RequestAborted);
+    var settings = await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings();
+    await state.SetAsync("settings", settings with { AlertsEnabled = request.Enabled }, context.RequestAborted);
+    return Results.Ok(new NotificationSettingsStatus(
+        request.Enabled,
+        !string.IsNullOrWhiteSpace(saved.DiscordWebhookUrl),
+        !string.IsNullOrWhiteSpace(saved.TelegramBotToken) && !string.IsNullOrWhiteSpace(saved.TelegramChatId)));
+}).AddEndpointFilter(CsrfFilter.Validate);
+owner.MapGet("/config/export", async (StateStore state, CancellationToken ct) =>
+{
+    var settings = await state.GetAsync<ServerSettings>("settings", ct) ?? new ServerSettings();
+    return Results.Ok(new ConfigurationBundle(
+        1,
+        DateTimeOffset.UtcNow,
+        settings with { ServerPassword = null },
+        await state.GetAsync<ModEntry[]>("mods", ct) ?? [],
+        await state.GetAsync<ModProfile[]>("mod_profiles", ct) ?? []));
+});
+owner.MapPost("/config/import", async (ConfigurationImportRequest request, StateStore state, ServerSupervisor supervisor, HttpContext context) =>
+{
+    var bundle = request.Bundle;
+    if (request.Confirm && !supervisor.IsRunning && bundle.SchemaVersion == 1 && bundle.Settings is not null && bundle.Mods is not null && bundle.ModProfiles is not null)
+    {
+        var errors = ServerSettingsValidator.Validate(bundle.Settings);
+        if (errors.Count > 0) return Results.ValidationProblem(errors);
+        var current = await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings();
+        var importedSettings = bundle.Settings with { ServerPassword = bundle.Settings.ServerPassword ?? current.ServerPassword };
+        await state.SetManyAsync(new Dictionary<string, object?>
+        {
+            ["settings"] = importedSettings,
+            ["mods"] = bundle.Mods,
+            ["mod_profiles"] = bundle.ModProfiles
+        }, context.RequestAborted);
+        return Results.NoContent();
+    }
+    return Results.BadRequest(new { error = "Stop the server and provide a supported configuration bundle." });
+}).AddEndpointFilter(CsrfFilter.Validate);
 
 var api = app.MapGroup("/api").RequireAuthorization().AddEndpointFilter(CsrfFilter.Validate);
 api.AddEndpointFilter((EndpointFilterInvocationContext context, EndpointFilterDelegate next) =>
@@ -132,14 +202,19 @@ api.MapGet("/settings", async (StateStore state, HttpContext context) => Results
 api.MapGet("/factorio-credentials/status", async (SecretStore secrets, HttpContext context) =>
 {
     var configured = await secrets.ReadAsync(context.RequestAborted);
-    return Results.Ok(new { configured = !string.IsNullOrWhiteSpace(configured.FactorioUsername) && !string.IsNullOrWhiteSpace(configured.FactorioToken) });
+    return Results.Ok(new
+    {
+        configured = !string.IsNullOrWhiteSpace(configured.FactorioUsername) && !string.IsNullOrWhiteSpace(configured.FactorioToken),
+        username = configured.FactorioUsername
+    });
 });
 api.MapPut("/factorio-credentials", async (FactorioCredentialsRequest request, SecretStore secrets, HttpContext context) =>
 {
-    var username = request.Username?.Trim();
-    var token = request.Token?.Trim();
+    var current = await secrets.ReadAsync(context.RequestAborted);
+    var username = string.IsNullOrWhiteSpace(request.Username) ? current.FactorioUsername : request.Username.Trim();
+    var token = string.IsNullOrWhiteSpace(request.Token) ? current.FactorioToken : request.Token.Trim();
     if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(token) || username.Length > 256 || token.Length > 512)
-        return Results.BadRequest(new { error = "Enter a valid Factorio username and token." });
+        return Results.BadRequest(new { error = "Enter both the Factorio username and token." });
     await secrets.WriteAsync(new SecretSettings(username, token), context.RequestAborted);
     return Results.NoContent();
 });
@@ -147,11 +222,20 @@ api.MapPut("/settings", async (ServerSettings settings, StateStore state, Server
 {
     if (supervisor.IsRunning)
         return Results.Conflict(new { error = "Stop the server before changing settings." });
-    var mapErrors = MapGenerationSettingsValidator.Validate(settings.MapGeneration);
-    if (settings.MaxPlayers is < 0 or > 500 || settings.AutosaveMinutes is < 1 or > 120 || settings.BackupRetention is < 1 or > 365 || mapErrors.Count > 0)
-        return Results.ValidationProblem(new Dictionary<string, string[]> { ["settings"] = ["One or more setting values are outside their allowed range."] });
-    await state.SetAsync("settings", settings, context.RequestAborted);
-    return Results.Ok(settings);
+    var submittedProfiles = settings.MapGenerationProfiles ?? new Dictionary<string, MapGenerationSettings>(StringComparer.OrdinalIgnoreCase);
+    var profiles = submittedProfiles.Count > 0
+        ? new Dictionary<string, MapGenerationSettings>(submittedProfiles, StringComparer.OrdinalIgnoreCase)
+        : new Dictionary<string, MapGenerationSettings>(StringComparer.OrdinalIgnoreCase);
+    if (!profiles.ContainsKey("vanilla")) profiles["vanilla"] = settings.MapGeneration;
+    if (!profiles.ContainsKey("space-age")) profiles["space-age"] = settings.MapGeneration;
+    var normalized = settings with { MapGenerationProfiles = profiles };
+    var validationErrors = ServerSettingsValidator.Validate(normalized);
+    if (validationErrors.Count > 0)
+        return Results.ValidationProblem(validationErrors);
+    var activeMap = profiles[normalized.Expansion];
+    normalized = normalized with { MapGeneration = activeMap };
+    await state.SetAsync("settings", normalized, context.RequestAborted);
+    return Results.Ok(normalized);
 });
 api.MapPost("/control/{action}", async (string action, ServerSupervisor supervisor, HttpContext context) =>
 {
@@ -172,8 +256,47 @@ api.MapGet("/logs/download", (DataPaths paths) =>
     File.Exists(Path.Combine(paths.Logs, "factorio.log"))
         ? Results.File(Path.Combine(paths.Logs, "factorio.log"), "text/plain", "factorio.log")
         : Results.NotFound(new { error = "No log file is available yet." }));
-api.MapGet("/system-health", (SystemHealthService health) => Results.Ok(health.GetSnapshot()));
+api.MapGet("/system-health", async (SystemHealthService health, HealthHistoryService history, CancellationToken ct) =>
+{
+    var snapshot = health.GetSnapshot();
+    await history.RecordAsync(snapshot, ct);
+    return Results.Ok(snapshot);
+});
+api.MapGet("/health-history", async (HealthHistoryService history, CancellationToken ct) => Results.Ok(await history.ListAsync(ct)));
 api.MapGet("/maintenance", async (MaintenanceStatusService maintenance, HttpContext context) => Results.Ok(await maintenance.GetAsync(context.RequestAborted)));
+api.MapGet("/server-history", async (ServerEventHistoryService history, HttpContext context) => Results.Ok(await history.ListAsync(context.RequestAborted)));
+api.MapPost("/maintenance/run/{operation}", async (string operation, MaintenanceRunRequest request, BackupService backups, VersionService versions, ServerSupervisor supervisor, MaintenanceHistoryService history, NotificationService notifications, HttpContext context) =>
+{
+    if (!context.User.HasClaim("role", "owner") && !context.User.HasClaim("role", "admin"))
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    if (!request.Confirm) return Results.BadRequest(new { error = "Explicit maintenance confirmation is required." });
+    var started = DateTimeOffset.UtcNow;
+    try
+    {
+        switch (operation.ToLowerInvariant())
+        {
+            case "backup":
+                await backups.CreateBackupAsync("manual", context.RequestAborted);
+                break;
+            case "update-check":
+                await versions.CheckForUpdateAsync(context.RequestAborted);
+                break;
+            case "restart":
+                await supervisor.RestartAsync(context.RequestAborted);
+                break;
+            default:
+                return Results.NotFound();
+        }
+        await history.RecordAsync($"manual-{operation}", true, started, DateTimeOffset.UtcNow, "Maintenance operation completed.", context.RequestAborted);
+        return Results.NoContent();
+    }
+    catch (Exception exception) when (exception is InvalidOperationException or HttpRequestException)
+    {
+        await history.RecordAsync($"manual-{operation}", false, started, DateTimeOffset.UtcNow, exception.Message, context.RequestAborted);
+        await notifications.SendAsync($"Factorio maintenance failed ({operation})", exception.Message, context.RequestAborted);
+        return Results.BadRequest(new { error = exception.Message });
+    }
+});
 
 api.MapGet("/saves", (DataPaths paths) => Results.Ok(Directory.EnumerateFiles(paths.Saves, "*.zip").Select(Path.GetFileName).Order()));
 api.MapPost("/saves/create", async (SaveCreateRequest request, ServerSupervisor supervisor, HttpContext context) =>
@@ -195,13 +318,37 @@ api.MapPost("/saves/upload", async (IFormFile file, DataPaths paths, ServerSuper
 {
     if (supervisor.IsRunning) return Results.Conflict(new { error = "Stop the server before uploading a save." });
     var safe = Path.GetFileName(file.FileName);
-    if (!safe.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || file.Length == 0 || file.Length > 1024L * 1024 * 1024)
-        return Results.BadRequest(new { error = "Upload a Factorio .zip save no larger than 1 GB." });
-    await using var output = File.Create(Path.Combine(paths.Saves, safe));
-    await file.CopyToAsync(output, context.RequestAborted);
-    return Results.Created($"/api/saves/{Uri.EscapeDataString(safe)}", new { name = safe });
+    if (string.IsNullOrWhiteSpace(safe) || !string.Equals(safe, file.FileName, StringComparison.Ordinal) || !safe.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { error = "Upload a Factorio save as a file named with the .zip extension." });
+    if (file.Length == 0 || file.Length > 1024L * 1024 * 1024)
+        return Results.BadRequest(new { error = "The save upload must be non-empty and no larger than 1 GB." });
+    var destination = Path.Combine(paths.Saves, safe);
+    if (File.Exists(destination)) return Results.Conflict(new { error = $"A save named '{safe}' already exists. Choose a different name." });
+    var temporary = destination + ".upload-" + Guid.NewGuid().ToString("N") + ".tmp";
+    try
+    {
+        await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, true))
+            await file.CopyToAsync(output, context.RequestAborted);
+        try
+        {
+            using var archive = ZipFile.OpenRead(temporary);
+            if (archive.Entries.Count == 0) return Results.BadRequest(new { error = "The uploaded zip archive is empty." });
+        }
+        catch (InvalidDataException) { return Results.BadRequest(new { error = "The uploaded file is not a valid zip archive." }); }
+        try { File.Move(temporary, destination); }
+        catch (IOException) when (File.Exists(destination)) { return Results.Conflict(new { error = $"A save named '{safe}' already exists. Choose a different name." }); }
+        return Results.Created($"/api/saves/{Uri.EscapeDataString(safe)}", new { name = safe });
+    }
+    finally { if (File.Exists(temporary)) File.Delete(temporary); }
 });
-api.MapPost("/saves/backup", async (BackupService backups, HttpContext context) => Results.Ok(new { name = await backups.CreateBackupAsync("manual", context.RequestAborted) }));
+api.MapPost("/saves/backup", async (BackupService backups, HttpContext context) =>
+{
+    try { return Results.Ok(new { name = await backups.CreateBackupAsync("manual", context.RequestAborted) }); }
+    catch (InvalidOperationException exception) when (exception.Message.Contains("Stop the server", StringComparison.OrdinalIgnoreCase))
+    { return Results.Conflict(new { error = exception.Message }); }
+    catch (InvalidOperationException exception)
+    { return Results.BadRequest(new { error = exception.Message }); }
+});
 api.MapGet("/backups", async (BackupService backups, CancellationToken ct) => Results.Ok(await backups.ListAsync(ct)));
 api.MapGet("/backups/{backupId}/download", async (string backupId, BackupService backups, HttpContext context) =>
 {

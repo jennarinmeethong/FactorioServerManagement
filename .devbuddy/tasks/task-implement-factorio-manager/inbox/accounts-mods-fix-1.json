@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "accounts-mods-fix-1",
+  "attempt": 1,
+  "parent_revision": 26,
+  "role": "developer",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Implemented API role-string serialization, mod selection with stopped-state mutation gating, overflow-safe mod cards, checkbox styling, and regression coverage.",
+  "evidence": [
+    { "ref": "tests/FactorioManager.Api.Tests", "outcome": "28 passed, 0 failed." },
+    { "ref": "src/FactorioManager.Web/tsconfig.app.json", "outcome": "Frontend TypeScript no-emit check passes." },
+    { "ref": "src/FactorioManager.Web/package.json", "outcome": "Vite production build passes with only non-blocking third-party annotation warnings." },
+    { "ref": "src/FactorioManager.Api/ApiJsonOptions.cs", "outcome": "Roles serialize as lowercase strings and numeric enum values are rejected." },
+    { "ref": "src/FactorioManager.Web/src/App.tsx", "outcome": "Owner/admin can select mod checkboxes while server runs; mutations remain stopped-state gated." },
+    { "ref": "src/FactorioManager.Web/src/index.css", "outcome": "Long mod titles and summaries wrap safely and checkbox sizing is fixed." }
+  ],
+  "next_slice": { "summary": "Ready for independent QA and Docker verification.", "read_paths": ["src/FactorioManager.Api/ApiJsonOptions.cs", "src/FactorioManager.Web/src/App.tsx", "src/FactorioManager.Web/src/index.css", "tests/FactorioManager.Api.Tests/PersistenceTests.cs"], "read_keys": ["api-role-json-contract", "mods-selection-layout"] },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

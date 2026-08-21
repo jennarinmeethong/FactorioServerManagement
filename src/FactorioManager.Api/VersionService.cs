@@ -127,6 +127,7 @@ public sealed class VersionService(
 
     public async Task<ServerStatus> ApplyAsync(VersionApplyRequest request, CancellationToken cancellationToken)
     {
+        ValidateApplyRequest(request);
         var versionPath = Path.Combine(paths.Versions, request.Version);
         if (request.Channel is not ("stable" or "experimental") || !File.Exists(Path.Combine(versionPath, "bin", "x64", "factorio")))
             throw new InvalidOperationException("Download the selected Factorio version before applying it.");
@@ -149,6 +150,14 @@ public sealed class VersionService(
             if (wasRunning && !string.IsNullOrWhiteSpace(oldSettings.ActiveVersion)) await supervisor.StartAsync(CancellationToken.None);
             throw new InvalidOperationException("The update could not start; the previous version configuration was restored.", exception);
         }
+    }
+
+    public static void ValidateApplyRequest(VersionApplyRequest request)
+    {
+        if (!request.Confirm)
+            throw new InvalidOperationException("Explicit confirmation is required before applying a server version.");
+        if (request.Channel is not ("stable" or "experimental") || !System.Text.RegularExpressions.Regex.IsMatch(request.Version, "^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+            throw new InvalidOperationException("Channel or version is invalid.");
     }
 
 }

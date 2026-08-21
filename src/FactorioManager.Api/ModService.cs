@@ -385,7 +385,7 @@ public sealed class ModService(
         foreach (var item in manifest.ArchiveBackups)
         {
             var source = Contained(root, item.Value);
-            File.Copy(source, Contained(paths.Mods, item.Key), true);
+            File.Copy(source, Contained(paths.Mods, Path.Combine(paths.Mods, item.Key)), true);
         }
         var list = Path.Combine(paths.Mods, "mod-list.json");
         if (manifest.ModListBackup is null) { if (File.Exists(list)) File.Delete(list); } else File.Copy(Contained(root, manifest.ModListBackup), list, true);
@@ -505,7 +505,27 @@ public sealed class ModService(
         await EnsureRemoteSuccessAsync(response, "Mod Portal lookup");
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-        if (!document.RootElement.TryGetProperty("latest_release", out var release)) return (null, null);
+        var root = document.RootElement;
+        if (root.TryGetProperty("releases", out var releases) && releases.ValueKind == JsonValueKind.Array)
+        {
+            string? latestVersion = null;
+            string? latestUrl = null;
+            foreach (var candidate in releases.EnumerateArray())
+            {
+                var candidateVersion = candidate.TryGetProperty("version", out var candidateVersionValue) ? candidateVersionValue.GetString() : null;
+                var candidateUrl = candidate.TryGetProperty("download_url", out var candidateUrlValue) ? candidateUrlValue.GetString() : null;
+                if (string.IsNullOrWhiteSpace(candidateVersion) || string.IsNullOrWhiteSpace(candidateUrl)) continue;
+                if (version is not null && string.Equals(candidateVersion, version, StringComparison.OrdinalIgnoreCase)) return (candidateVersion, candidateUrl);
+                if (latestVersion is null || CompareVersions(candidateVersion, latestVersion) > 0)
+                {
+                    latestVersion = candidateVersion;
+                    latestUrl = candidateUrl;
+                }
+            }
+            return (latestVersion, version is null ? latestUrl : null);
+        }
+
+        if (!root.TryGetProperty("latest_release", out var release)) return (null, null);
         var latest = release.TryGetProperty("version", out var versionValue) ? versionValue.GetString() : null;
         var url = release.TryGetProperty("download_url", out var urlValue) ? urlValue.GetString() : null;
         if (version is not null && !string.Equals(latest, version, StringComparison.OrdinalIgnoreCase)) return (latest, null);
@@ -549,6 +569,8 @@ public sealed class ModService(
             if (document.RootElement.TryGetProperty("error", out property)) message ??= property.GetString();
         }
         catch (JsonException) { }
+        if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+            throw new HttpRequestException($"{operation} rejected the Factorio username/token (HTTP {(int)response.StatusCode}). Re-enter a current token from your Factorio profile.", null, response.StatusCode);
         throw new HttpRequestException($"{operation} failed with HTTP {(int)response.StatusCode}{(string.IsNullOrWhiteSpace(message) ? "." : $": {message}")}", null, response.StatusCode);
     }
 

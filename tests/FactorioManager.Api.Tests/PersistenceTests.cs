@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Xunit;
 
 namespace FactorioManager.Api.Tests;
@@ -10,6 +11,24 @@ namespace FactorioManager.Api.Tests;
 public sealed class PersistenceTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), $"factorio-manager-test-{Guid.NewGuid():N}");
+
+    [Fact]
+    public void VersionApplyRequiresExplicitConfirmation()
+    {
+        var request = new VersionApplyRequest("2.0.77", "stable");
+
+        var exception = Assert.Throws<InvalidOperationException>(() => VersionService.ValidateApplyRequest(request));
+
+        Assert.Contains("Explicit confirmation is required", exception.Message);
+    }
+
+    [Fact]
+    public void ConfirmedVersionApplyRequestPassesValidation()
+    {
+        var request = new VersionApplyRequest("2.0.77", "stable", Confirm: true);
+
+        VersionService.ValidateApplyRequest(request);
+    }
 
     [Fact]
     public async Task SetupCodeCanOnlyConfigureOneAdminAccount()
@@ -22,6 +41,40 @@ public sealed class PersistenceTests : IDisposable
         Assert.True(await setup.VerifyPasswordAsync("this-is-a-safe-password"));
         Assert.False(await setup.TryConfigureAsync(setup.Code, "another-safe-password"));
         Assert.False(await setup.VerifyPasswordAsync("another-safe-password"));
+    }
+
+    [Fact]
+    public async Task FreshSetupCreatesAdminAsOwner()
+    {
+        var store = await CreateStoreAsync();
+        var setup = new SetupCodeService(store);
+        var accounts = new AccountService(store);
+
+        // The application calls the bootstrap check before setup on a clean data
+        // directory; it must be a no-op until the password hash exists.
+        await accounts.EnsureInitialOwnerAsync();
+
+        Assert.True(await setup.TryConfigureAsync(setup.Code, "this-is-a-safe-password"));
+
+        await accounts.EnsureInitialOwnerAsync();
+
+        var admin = await accounts.FindByUsernameAsync("admin");
+        Assert.NotNull(admin);
+        Assert.Equal(UserRole.Owner, admin.Role);
+    }
+
+    [Fact]
+    public void ApiRolesUseLowercaseStringsAndRejectNumericValues()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        ApiJsonOptions.Configure(options);
+
+        var user = new UserRecord("id", "admin", UserRole.Owner, "stamp", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        Assert.Contains("\"role\":\"owner\"", JsonSerializer.Serialize(user, options));
+        Assert.Equal(UserRole.Admin, JsonSerializer.Deserialize<CreateUserRequest>(
+            "{\"username\":\"operator\",\"password\":\"safe-pass\",\"role\":\"admin\"}", options)!.Role);
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<CreateUserRequest>(
+            "{\"username\":\"operator\",\"password\":\"safe-pass\",\"role\":1}", options));
     }
 
     [Fact]
@@ -48,6 +101,44 @@ public sealed class PersistenceTests : IDisposable
         await accounts.EnsureInitialOwnerAsync();
 
         Assert.Equal(UserRole.Owner, (await accounts.FindByUsernameAsync("admin"))?.Role);
+    }
+
+    [Fact]
+    public async Task BootstrapAdminViewerIsPromotedToAdminWhenAnotherOwnerExists()
+    {
+        var store = await CreateStoreAsync();
+        var setup = new SetupCodeService(store);
+        Assert.True(await setup.TryConfigureAsync(setup.Code, "12345678"));
+
+        var accounts = new AccountService(store);
+        await accounts.CreateAsync("admin", "87654321", UserRole.Viewer);
+        await accounts.CreateAsync("other-owner", "87654321", UserRole.Admin);
+        await using var connection = store.OpenConnection();
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        var other = await accounts.FindByUsernameAsync("other-owner");
+        command.Parameters.AddWithValue("$id", other!.Id);
+        command.CommandText = "UPDATE users SET role='owner' WHERE id=$id";
+        await command.ExecuteNonQueryAsync();
+
+        await accounts.EnsureInitialOwnerAsync();
+
+        Assert.Equal(UserRole.Admin, (await accounts.FindByUsernameAsync("admin"))?.Role);
+    }
+
+    [Fact]
+    public async Task SecretStoreKeepsTokenWhenUsernameIsUpdatedWithoutToken()
+    {
+        var paths = CreatePaths();
+        paths.EnsureCreated();
+        var secrets = new SecretStore(paths);
+
+        await secrets.WriteAsync(new SecretSettings(" portal-user ", " portal-token "));
+        await secrets.UpdateAsync("renamed-user", null);
+
+        var saved = await secrets.ReadAsync();
+        Assert.Equal("renamed-user", saved.FactorioUsername);
+        Assert.Equal("portal-token", saved.FactorioToken);
     }
 
     [Fact]
@@ -130,6 +221,66 @@ public sealed class PersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task ModTransactionRecoveryRestoresOverwrittenArchiveAndQuarantinesReplayOrphan()
+    {
+        var paths = CreatePaths();
+        paths.EnsureCreated();
+        var store = new StateStore(paths);
+        await store.InitializeAsync(CancellationToken.None);
+        var supervisor = new ServerSupervisor(paths, store, null!, null!);
+        var service = new ModService(paths, store, null!, supervisor);
+
+        var transactionRoot = Path.Combine(paths.Mods, ".mod-transaction", "replay");
+        var archiveBackupRoot = Path.Combine(transactionRoot, "archives");
+        Directory.CreateDirectory(archiveBackupRoot);
+        var archiveName = "example-mod_1.0.0.zip";
+        var archivePath = Path.Combine(paths.Mods, archiveName);
+        var backupPath = Path.Combine(archiveBackupRoot, archiveName);
+        await File.WriteAllTextAsync(backupPath, "original archive");
+        await File.WriteAllTextAsync(archivePath, "overwritten archive");
+        var replayOrphan = Path.Combine(paths.Mods, "replay-only_1.0.0.zip");
+        await File.WriteAllTextAsync(replayOrphan, "replayed archive");
+
+        var journal = Path.Combine(paths.Mods, ".mod-transaction.json");
+        await File.WriteAllTextAsync(journal, JsonSerializer.Serialize(new
+        {
+            Operation = "upload",
+            StartedAt = DateTimeOffset.UtcNow,
+            BackupDirectory = transactionRoot,
+            ArchiveBackups = new Dictionary<string, string> { [archiveName] = backupPath },
+            ModListBackup = (string?)null,
+            Mods = Array.Empty<ModEntry>(),
+            Profiles = Array.Empty<ModProfile>(),
+            Phase = "prepared"
+        }));
+
+        await service.RecoverForTestingAsync();
+
+        Assert.Equal("original archive", await File.ReadAllTextAsync(archivePath));
+        Assert.False(File.Exists(journal));
+        Assert.Contains(Directory.EnumerateFiles(Path.Combine(paths.Mods, ".quarantine")), file => file.Contains("recovery-orphan-replay-only_1.0.0.zip", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task MalformedModTransactionJournalIsQuarantinedForRecovery()
+    {
+        var paths = CreatePaths();
+        paths.EnsureCreated();
+        var store = new StateStore(paths);
+        await store.InitializeAsync(CancellationToken.None);
+        var supervisor = new ServerSupervisor(paths, store, null!, null!);
+        var service = new ModService(paths, store, null!, supervisor);
+        var journal = Path.Combine(paths.Mods, ".mod-transaction.json");
+        await File.WriteAllTextAsync(journal, "{ malformed journal");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.RecoverForTestingAsync());
+
+        Assert.Contains("malformed", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(File.Exists(journal));
+        Assert.Single(Directory.EnumerateFiles(paths.Mods, ".mod-transaction.json.quarantine*"));
+    }
+
+    [Fact]
     public async Task AdminPasswordCanBeChangedWithTheCurrentPassword()
     {
         var store = await CreateStoreAsync();
@@ -165,6 +316,67 @@ public sealed class PersistenceTests : IDisposable
         Assert.Contains(errors, error => error.Contains("cooldown", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(errors, error => error.Contains("Cliff", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(errors, error => error.Contains("dimensions", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void ServerSettingsKeepVanillaAndSpaceAgeMapProfilesSeparate()
+    {
+        var vanilla = new MapGenerationSettings { Seed = 101 };
+        var spaceAge = new MapGenerationSettings { Seed = 202, PeacefulMode = true };
+        var settings = new ServerSettings(
+            MapGeneration: vanilla,
+            Expansion: "space-age",
+            MapGenerationProfiles: new Dictionary<string, MapGenerationSettings>
+            {
+                ["vanilla"] = vanilla,
+                ["space-age"] = spaceAge
+            });
+
+        Assert.Equal(101, settings.MapGenerationProfiles["vanilla"].Seed);
+        Assert.Equal(202, settings.MapGenerationProfiles["space-age"].Seed);
+        Assert.True(settings.MapGenerationProfiles["space-age"].PeacefulMode);
+
+        var legacy = new ServerSettings(MapGeneration: vanilla);
+        Assert.Equal(vanilla.Seed, legacy.MapGenerationProfiles["vanilla"].Seed);
+        Assert.Equal(vanilla.Seed, legacy.MapGenerationProfiles["space-age"].Seed);
+    }
+
+    [Fact]
+    public void LegacySettingsPayloadCanBeSavedAfterProfileBackfill()
+    {
+        const string legacyJson = "{\"serverName\":\"My Factorio Server\",\"description\":\"Managed by Factorio Server Manager\",\"maxPlayers\":0,\"visibilityPublic\":false,\"serverPassword\":null,\"autosaveMinutes\":10,\"activeSave\":null,\"channel\":\"stable\",\"activeVersion\":\"2.0.77\",\"backupIntervalHours\":24,\"backupRetention\":7,\"timeZone\":\"UTC\",\"mapGeneration\":{\"seed\":null,\"width\":0,\"height\":0,\"water\":\"normal\",\"startingArea\":\"normal\",\"terrainSegmentation\":\"normal\",\"peacefulMode\":false,\"ironOre\":{\"frequency\":\"normal\",\"size\":\"normal\",\"richness\":\"normal\"},\"copperOre\":{\"frequency\":\"normal\",\"size\":\"normal\",\"richness\":\"normal\"},\"stone\":{\"frequency\":\"normal\",\"size\":\"normal\",\"richness\":\"normal\"},\"coal\":{\"frequency\":\"normal\",\"size\":\"normal\",\"richness\":\"normal\"},\"uraniumOre\":{\"frequency\":\"normal\",\"size\":\"normal\",\"richness\":\"normal\"},\"crudeOil\":{\"frequency\":\"normal\",\"size\":\"normal\",\"richness\":\"normal\"},\"trees\":{\"frequency\":\"normal\",\"size\":\"normal\",\"richness\":\"normal\"},\"enemyBase\":{\"frequency\":\"normal\",\"size\":\"normal\",\"richness\":\"normal\"}}}";
+        var settings = JsonSerializer.Deserialize<ServerSettings>(legacyJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        var profiles = new Dictionary<string, MapGenerationSettings>(settings.MapGenerationProfiles, StringComparer.OrdinalIgnoreCase)
+        {
+            ["vanilla"] = settings.MapGeneration,
+            ["space-age"] = settings.MapGeneration
+        };
+        var saved = settings with { MapGenerationProfiles = profiles };
+
+        Assert.Empty(ServerSettingsValidator.Validate(saved));
+        Assert.Equal("2.0.77", saved.ActiveVersion);
+        Assert.Equal(2, saved.MapGenerationProfiles.Count);
+    }
+
+    [Fact]
+    public void SettingsValidationReturnsFieldSpecificErrorsInsteadOfGenericBadRequest()
+    {
+        var settings = new ServerSettings(
+            ServerName: "",
+            BackupIntervalHours: 0,
+            AllowCommands: "sometimes",
+            MapGenerationProfiles: new Dictionary<string, MapGenerationSettings>
+            {
+                ["vanilla"] = new MapGenerationSettings { Width = 32 },
+                ["space-age"] = new MapGenerationSettings()
+            });
+
+        var errors = ServerSettingsValidator.Validate(settings);
+
+        Assert.Contains("serverName", errors.Keys);
+        Assert.Contains("backupIntervalHours", errors.Keys);
+        Assert.Contains("allowCommands", errors.Keys);
+        Assert.Contains("mapGenerationProfiles.vanilla", errors.Keys);
     }
 
     [Fact]
@@ -241,7 +453,7 @@ public sealed class PersistenceTests : IDisposable
         await store.SetAsync<DateTimeOffset?>("last_scheduled_backup", lastBackup, CancellationToken.None);
         await store.SetAsync<DateTimeOffset?>("last_update_check", lastUpdate, CancellationToken.None);
 
-        var status = await new MaintenanceStatusService(store).GetAsync(CancellationToken.None);
+        var status = await new MaintenanceStatusService(store, new MaintenanceHistoryService(store)).GetAsync(CancellationToken.None);
 
         Assert.Equal(6, status.BackupIntervalHours);
         Assert.Equal(4, status.BackupRetention);
@@ -257,12 +469,81 @@ public sealed class PersistenceTests : IDisposable
     {
         var store = await CreateStoreAsync();
 
-        var status = await new MaintenanceStatusService(store).GetAsync(CancellationToken.None);
+        var status = await new MaintenanceStatusService(store, new MaintenanceHistoryService(store)).GetAsync(CancellationToken.None);
 
         Assert.Null(status.LastScheduledBackup);
         Assert.Null(status.NextScheduledBackup);
         Assert.Null(status.LastUpdateCheck);
         Assert.Null(status.NextUpdateCheck);
+        Assert.Empty(status.RecentHistory);
+    }
+
+    [Fact]
+    public async Task MaintenanceHistoryPersistsNewestEntriesAndRedactsSecrets()
+    {
+        var store = await CreateStoreAsync();
+        var history = new MaintenanceHistoryService(store);
+        var started = DateTimeOffset.UtcNow.AddSeconds(-1);
+
+        await history.RecordAsync("scheduled-backup", false, started, DateTimeOffset.UtcNow, "token=super-secret; backup failed");
+
+        var status = await new MaintenanceStatusService(store, history).GetAsync(CancellationToken.None);
+        var entry = Assert.Single(status.RecentHistory);
+        Assert.Equal("scheduled-backup", entry.Operation);
+        Assert.Equal("failure", entry.Status);
+        Assert.DoesNotContain("super-secret", entry.Message);
+        Assert.Contains("redacted", entry.Message);
+    }
+
+    [Fact]
+    public async Task MaintenanceHistoryIsBoundedAndReturnedNewestFirst()
+    {
+        var store = await CreateStoreAsync();
+        var history = new MaintenanceHistoryService(store);
+        for (var index = 0; index < 55; index++)
+            await history.RecordAsync("scheduled-update-check", true, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, $"attempt-{index}");
+
+        var entries = await history.ListAsync(CancellationToken.None);
+        Assert.Equal(50, entries.Count);
+        Assert.Equal("attempt-54", entries[0].Message);
+        Assert.DoesNotContain(entries, item => item.Message == "attempt-0");
+    }
+
+    [Fact]
+    public async Task ServerEventHistoryIsBoundedNewestFirstAndRedactsSecrets()
+    {
+        var store = await CreateStoreAsync();
+        var history = new ServerEventHistoryService(store);
+
+        for (var index = 0; index < 55; index++)
+            await history.RecordAsync("automatic-restart", "failure", DateTimeOffset.UtcNow, $"attempt-{index} token=secret-{index}");
+
+        var entries = await history.ListAsync(CancellationToken.None);
+        Assert.Equal(50, entries.Count);
+        Assert.Equal("attempt-54 token=[redacted]", entries[0].Message);
+        Assert.DoesNotContain(entries, item => item.Message.Contains("secret-", StringComparison.Ordinal));
+        Assert.DoesNotContain(entries, item => item.Message.StartsWith("attempt-0", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ServerEventHistoryPersistsUnexpectedExitAndRestartOutcomeKinds()
+    {
+        var store = await CreateStoreAsync();
+        var history = new ServerEventHistoryService(store);
+
+        await history.RecordAsync("unexpected-exit", "failure", DateTimeOffset.UtcNow, "Factorio exited unexpectedly.");
+        await history.RecordAsync("automatic-restart", "success", DateTimeOffset.UtcNow, "Automatic restart succeeded.");
+
+        var entries = await history.ListAsync(CancellationToken.None);
+        Assert.Equal(["automatic-restart", "unexpected-exit"], entries.Select(entry => entry.EventKind));
+        Assert.Equal(["success", "failure"], entries.Select(entry => entry.Status));
+    }
+
+    [Fact]
+    public void ManualStopExitDecisionNeverTriggersAutomaticRestart()
+    {
+        Assert.False(ServerSupervisor.ShouldAutoRestartAfterExit(manualStopRequested: true));
+        Assert.True(ServerSupervisor.ShouldAutoRestartAfterExit(manualStopRequested: false));
     }
 
     [Fact]
@@ -283,6 +564,107 @@ public sealed class PersistenceTests : IDisposable
         Assert.True(File.Exists(Path.Combine(paths.Backups, second)));
         Assert.Single(Directory.EnumerateFiles(paths.Backups, "*.zip"));
         Assert.False(File.Exists(Path.Combine(paths.Backups, first)));
+    }
+
+    [Fact]
+    public async Task BackupServiceWithoutActiveSaveReturnsUsefulValidationError()
+    {
+        var paths = CreatePaths();
+        paths.EnsureCreated();
+        var store = new StateStore(paths);
+        await store.InitializeAsync(CancellationToken.None);
+        await store.SetAsync("settings", new ServerSettings(), CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => new BackupService(paths, store).CreateBackupAsync("manual", CancellationToken.None));
+
+        Assert.Contains("backup name is invalid", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task BackupServiceRenameDeleteAndRestoreRoundTripPreservesMetadataAndActiveSave()
+    {
+        var paths = CreatePaths();
+        paths.EnsureCreated();
+        var store = new StateStore(paths);
+        await store.InitializeAsync(CancellationToken.None);
+        await store.SetAsync("settings", new ServerSettings(ActiveSave: "world.zip", BackupRetention: 5), CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(paths.Saves, "world.zip"), "before");
+
+        var backups = new BackupService(paths, store);
+        var created = await backups.CreateBackupAsync("manual", CancellationToken.None);
+        await backups.RenameAsync(created, "named-backup.zip", CancellationToken.None);
+        var renamed = Assert.Single(await backups.ListAsync(CancellationToken.None));
+        Assert.Equal("named-backup.zip", renamed.FileName);
+
+        await File.WriteAllTextAsync(Path.Combine(paths.Saves, "world.zip"), "changed");
+        await backups.RestoreAsync(renamed.Id, true, CancellationToken.None);
+        Assert.Equal("before", await File.ReadAllTextAsync(Path.Combine(paths.Saves, "world.zip")));
+        Assert.Equal("world.zip", (await store.GetAsync<ServerSettings>("settings", CancellationToken.None))!.ActiveSave);
+
+        await backups.DeleteAsync(renamed.Id, CancellationToken.None);
+        Assert.Empty(await backups.ListAsync(CancellationToken.None));
+        Assert.False(File.Exists(Path.Combine(paths.Backups, "named-backup.zip")));
+    }
+
+    [Fact]
+    public async Task HealthHistoryIsBoundedAndPreservesResourceSamples()
+    {
+        var store = await CreateStoreAsync();
+        var paths = CreatePaths();
+        paths.EnsureCreated();
+        var healthService = new SystemHealthService(paths);
+        var history = new HealthHistoryService(store);
+
+        for (var index = 0; index < 245; index++)
+            await history.RecordAsync(healthService.GetSnapshot());
+
+        var samples = await history.ListAsync(CancellationToken.None);
+        Assert.Equal(240, samples.Count);
+        Assert.True(samples[^1].Timestamp >= samples[0].Timestamp);
+        Assert.True(samples[^1].WorkingSetBytes > 0);
+    }
+
+    [Fact]
+    public void ScheduledSettingsValidateTimeAndAllowLegacyDefaults()
+    {
+        var valid = ServerSettingsValidator.Validate(new ServerSettings(ScheduledRestartEnabled: true, ScheduledRestartTime: "23:45"));
+        Assert.Empty(valid);
+
+        var invalid = ServerSettingsValidator.Validate(new ServerSettings(ScheduledRestartEnabled: true, ScheduledRestartTime: "9am"));
+        Assert.Contains("scheduledRestartTime", invalid.Keys);
+    }
+
+    [Fact]
+    public async Task NotificationSecretsRoundTripWithoutChangingFactorioCredentials()
+    {
+        var paths = CreatePaths();
+        paths.EnsureCreated();
+        var secrets = new SecretStore(paths);
+        await secrets.WriteAsync(new SecretSettings("factorio-user", "factorio-token", "https://discord.invalid/hook", "telegram-token", "123"));
+        await secrets.UpdateAsync(null, null);
+
+        var saved = await secrets.ReadAsync();
+        Assert.Equal("factorio-user", saved.FactorioUsername);
+        Assert.Equal("factorio-token", saved.FactorioToken);
+        Assert.Equal("https://discord.invalid/hook", saved.DiscordWebhookUrl);
+        Assert.Equal("telegram-token", saved.TelegramBotToken);
+        Assert.Equal("123", saved.TelegramChatId);
+    }
+
+    [Fact]
+    public async Task NotificationSecretUpdateKeepsExistingDestinationsWhenFieldsAreBlank()
+    {
+        var paths = CreatePaths();
+        paths.EnsureCreated();
+        var secrets = new SecretStore(paths);
+        await secrets.WriteAsync(new SecretSettings("factorio-user", "factorio-token", "https://discord.invalid/hook", "telegram-token", "123"));
+
+        await secrets.UpdateNotificationsAsync(" ", "", null);
+
+        var saved = await secrets.ReadAsync();
+        Assert.Equal("https://discord.invalid/hook", saved.DiscordWebhookUrl);
+        Assert.Equal("telegram-token", saved.TelegramBotToken);
+        Assert.Equal("123", saved.TelegramChatId);
     }
 
     private async Task<StateStore> CreateStoreAsync()

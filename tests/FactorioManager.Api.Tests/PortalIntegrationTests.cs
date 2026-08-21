@@ -58,6 +58,27 @@ public sealed class PortalIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task ModInstallUsesLatestReleaseFromReleasesArray()
+    {
+        var paths = CreatePaths();
+        paths.EnsureCreated();
+        var store = new StateStore(paths);
+        await store.InitializeAsync(CancellationToken.None);
+        await store.SetAsync("settings", new ServerSettings(ActiveVersion: "2.0.77"));
+        var secrets = new SecretStore(paths);
+        await secrets.WriteAsync(new SecretSettings("portal-user", "portal-token"));
+        var archive = await CreateModArchiveAsync();
+        var handler = new RecordingHandler(request => request.RequestUri!.AbsolutePath.StartsWith("/api/mods/", StringComparison.Ordinal)
+            ? JsonResponse("{\"releases\":[{\"version\":\"0.4.8\",\"download_url\":\"/download/example-mod_0.4.8.zip\"},{\"version\":\"0.4.9\",\"download_url\":\"/download/example-mod_0.4.9.zip\"}]}")
+            : new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(archive) });
+        var service = CreateModService(paths, store, handler, secrets);
+
+        await service.InstallAsync(new ModInstallRequest("example-mod"), CancellationToken.None);
+
+        Assert.Equal("/download/example-mod_0.4.9.zip", handler.LastDownloadRequest!.RequestUri!.AbsolutePath);
+    }
+
+    [Fact]
     public async Task VersionCatalogIsReturnedFromFactorioEndpoint()
     {
         var paths = CreatePaths();

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "viewer-role-qa-1",
+  "attempt": 1,
+  "parent_revision": 25,
+  "role": "qa",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "QA passed. Fresh setup creates admin as owner; stale viewer cookie is invalidated by cookie version bump and database role validation; Accounts-create flow intentionally defaults new users to viewer.",
+  "evidence": [
+    { "ref": "src/FactorioManager.Api/Accounts.cs:EnsureInitialOwnerAsync", "outcome": "Bootstrap admin is inserted or promoted to owner." },
+    { "ref": "tests/FactorioManager.Api.Tests/PersistenceTests.cs", "outcome": "Fresh setup owner regression test passes." },
+    { "ref": "src/FactorioManager.Api/Program.cs", "outcome": "Cookie v3 and role validation reject stale viewer claims." },
+    { "ref": "src/FactorioManager.Api/Domain.cs; src/FactorioManager.Web/src/App.tsx", "outcome": "Accounts-create defaults are viewer in both backend and UI." },
+    { "ref": "dotnet test --no-restore", "outcome": "27 passed, 0 failed." },
+    { "ref": "docker compose ps; /health", "outcome": "Container is running healthy and health endpoint returns 200." }
+  ],
+  "next_slice": { "summary": "No further QA slice required for bootstrap role; if product intent is that every Accounts-created user defaults to admin, change that explicit default separately.", "read_paths": ["src/FactorioManager.Api/Program.cs", "src/FactorioManager.Api/Accounts.cs", "src/FactorioManager.Api/Domain.cs", "src/FactorioManager.Web/src/App.tsx"], "read_keys": ["bootstrap-owner-role", "stale-role-cookie", "accounts-create-viewer-default"] },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

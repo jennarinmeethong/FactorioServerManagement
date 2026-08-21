@@ -4,12 +4,15 @@ public sealed record MaintenanceStatus(
     DateTimeOffset CheckedAt,
     int BackupIntervalHours,
     int BackupRetention,
+    bool ScheduledRestartEnabled,
+    string ScheduledRestartTime,
     DateTimeOffset? LastScheduledBackup,
     DateTimeOffset? NextScheduledBackup,
     DateTimeOffset? LastUpdateCheck,
-    DateTimeOffset? NextUpdateCheck);
+    DateTimeOffset? NextUpdateCheck,
+    IReadOnlyList<MaintenanceHistoryEntry> RecentHistory);
 
-public sealed class MaintenanceStatusService(StateStore state)
+public sealed class MaintenanceStatusService(StateStore state, MaintenanceHistoryService history)
 {
     public async Task<MaintenanceStatus> GetAsync(CancellationToken cancellationToken = default)
     {
@@ -20,9 +23,12 @@ public sealed class MaintenanceStatusService(StateStore state)
             DateTimeOffset.UtcNow,
             settings.BackupIntervalHours,
             settings.BackupRetention,
+            settings.ScheduledRestartEnabled,
+            settings.ScheduledRestartTime,
             lastBackup,
             lastBackup?.AddHours(settings.BackupIntervalHours),
             lastUpdate,
-            lastUpdate?.AddHours(1));
+            lastUpdate?.AddHours(1),
+            await history.ListAsync(cancellationToken));
     }
 }

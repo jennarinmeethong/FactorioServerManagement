@@ -8,7 +8,7 @@ memory_root: knowledge-base
 tools:
   is_rtk: false
 orchestration:
-  max_concurrency: 2
+  max_concurrency: 4
   task_timeout_seconds: 900
   retry_limit: 1
   adapter_profiles: [claude, codex]

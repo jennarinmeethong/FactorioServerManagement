@@ -154,5 +154,16 @@ bun run dev</code></pre>
 
   <footer>อ้างอิงจาก Dockerfile, compose.yaml และ README ของ Factorio Server Manager</footer>
 </main>
+    <h2>Reverse proxy and TLS</h2>
+    <p>Keep the manager bound to localhost and terminate TLS at a reverse proxy. The proxy must forward the
+      <code>/hubs/status</code> WebSocket endpoint as well as <code>/api</code>.</p>
+    <pre><code>manager.example.com {
+  reverse_proxy 127.0.0.1:8080
+}</code></pre>
+    <p>For Nginx, use <code>proxy_http_version 1.1</code>, forward the
+      <code>Upgrade</code> and <code>Connection</code> headers, and set a long read timeout for SignalR.
+      Do not expose port <code>34197</code> through the HTTP proxy; it is the separate UDP game port.</p>
+    <p>Use a trusted certificate authority, rotate certificates automatically, and restrict the upstream
+      firewall rule to the proxy host. Never place Factorio or notification tokens in this document.</p>
 </body>
 </html>

@@ -3,7 +3,7 @@
 - Status: `in_progress`
 - Project IDs: [factorio-server-management]
 - Session ID / attempt: 20260816-codex / 1
-- Memory revision: 24
+- Memory revision: 36
 - Memory root reference: C:\Codes\FactorioServerManagement\.devbuddy
 
 ## Slices, locks, and records
@@ -99,3 +99,39 @@
 
 ## Canonical commits
 - revision 24: QA findings remediated: backend 8-character password enforcement, safe Versions empty-response fallback, and installed Mods paged controls verified in final build/container.
+
+## Canonical commits
+- revision 25: Fresh setup creates admin as owner; added regression coverage and bumped auth cookie version to invalidate stale viewer role claims.
+
+## Canonical commits
+- revision 26: Reserve source and test scopes for enum role serialization, Accounts display, Mods selection/layout fixes, and regression coverage.
+
+## Canonical commits
+- revision 27: Fixed numeric RBAC enum serialization causing owner to display as viewer; enabled safe mod selection while preserving stopped-state mutation gates; fixed checkbox sizing and text wrapping; QA 28/28, frontend build, Docker rebuild, health, auth status, and bind-mount checks passed.
+
+## Canonical commits
+- revision 28: Settings slice complete: fixed ValidationProblem error rendering, added field-specific validation, exposed all persisted server settings controls, mapped settings into server-settings.json, preserved Vanilla/Space Age profiles, added regression coverage (32 tests) and verified frontend build. Docker restart was blocked by local Docker named-pipe permissions.
+
+## Canonical commits
+- revision 29: Accepted mod transaction follow-up: fixed archive recovery destination validation and added archive overwrite/replay plus malformed journal quarantine regression tests; 34 backend tests pass.
+
+## Canonical commits
+- revision 30: Accepted Milestone 3 maintenance-history slice: scheduled backup/update-check success and failure history is durable, bounded, newest-first, redacted, exposed by maintenance status, and independently QA-passed; 36 backend tests pass.
+
+## Canonical commits
+- revision 31: Accepted maintenance-history UI slice: Health page renders recent scheduled maintenance results with safe status/time/message display and empty state; independent QA passed and frontend build succeeded.
+
+## Canonical commits
+- revision 32: Accepted server-event-history slice after QA race fix: bounded redacted unexpected-exit and automatic-restart history, authenticated read-only endpoint, per-process manual-stop intent, deterministic regression coverage; 39 backend tests pass.
+
+## Canonical commits
+- revision 33: Accepted crash/restart history Health UI slice: authenticated server history is fetched and rendered with status, timestamp, safe message, and empty state; QA and frontend build passed.
+
+## Canonical commits
+- revision 34: Accepted version-apply approval gate: backend requires explicit confirm before validation/mutation, Versions UI sends confirm after user confirmation, existing backup/rollback preserved, independent QA passed; 41 backend tests and frontend build pass.
+
+## Canonical commits
+- revision 35: Accepted saves-complete-1: completed Saves UI and API end-to-end with guarded operations, atomic validated non-overwriting zip uploads, active-save feedback, and backup lifecycle regression coverage; 42 backend tests and frontend build pass.
+
+## Canonical commits
+- revision 36: Complete Saves lifecycle and make manual backup errors actionable

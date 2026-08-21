@@ -6,6 +6,7 @@ public sealed record SystemHealthStatus(
     DateTimeOffset CheckedAt,
     long UptimeSeconds,
     long WorkingSetBytes,
+    double CpuUsagePercent,
     long? DataFreeBytes,
     long? DataTotalBytes,
     int SaveCount,
@@ -17,10 +18,20 @@ public sealed record SystemHealthStatus(
 public sealed class SystemHealthService(DataPaths paths)
 {
     private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
+    private TimeSpan _lastCpu;
+    private DateTimeOffset _lastCpuAt = DateTimeOffset.UtcNow;
 
     public SystemHealthStatus GetSnapshot()
     {
         var process = Process.GetCurrentProcess();
+        var now = DateTimeOffset.UtcNow;
+        var cpu = process.TotalProcessorTime;
+        var elapsed = now - _lastCpuAt;
+        var cpuPercent = elapsed.TotalMilliseconds <= 0
+            ? 0
+            : Math.Clamp((cpu - _lastCpu).TotalMilliseconds / (elapsed.TotalMilliseconds * Environment.ProcessorCount) * 100, 0, 100);
+        _lastCpu = cpu;
+        _lastCpuAt = now;
         long? free = null;
         long? total = null;
         try
@@ -33,9 +44,10 @@ public sealed class SystemHealthService(DataPaths paths)
         catch (UnauthorizedAccessException) { }
 
         return new(
-            DateTimeOffset.UtcNow,
-            Math.Max(0, (long)(DateTimeOffset.UtcNow - _startedAt).TotalSeconds),
+            now,
+            Math.Max(0, (long)(now - _startedAt).TotalSeconds),
             process.WorkingSet64,
+            cpuPercent,
             free,
             total,
             CountFiles(paths.Saves, "*.zip"),

@@ -11,12 +11,14 @@ public sealed class ServerSupervisor(
     DataPaths paths,
     StateStore store,
     IHubContext<StatusHub> hub,
-    ILogger<ServerSupervisor> logger)
+    ILogger<ServerSupervisor> logger,
+    ServerEventHistoryService? eventHistory = null,
+    NotificationService? notifications = null)
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentQueue<string> _recentLogs = new();
+    private readonly ConcurrentDictionary<Process, bool> _manualStopRequests = new();
     private Process? _process;
-    private bool _manualStop;
     private ServerStatus _status = new(ServerState.Stopped, null, DateTimeOffset.UtcNow, 0, null);
     public RconEndpoint? RconEndpoint { get; private set; }
 
@@ -40,8 +42,8 @@ public sealed class ServerSupervisor(
             if (!File.Exists(executable)) throw new InvalidOperationException($"Factorio executable was not found for version {settings.ActiveVersion}.");
             if (!File.Exists(save)) throw new InvalidOperationException("The selected save no longer exists.");
 
+            await WriteExpansionModListAsync(settings, cancellationToken);
             await WriteServerSettingsAsync(settings, cancellationToken);
-            _manualStop = false;
             await SetStatusAsync(new(ServerState.Starting, null, DateTimeOffset.UtcNow, _status.RestartAttempt, null));
             var startInfo = new ProcessStartInfo(executable)
             {
@@ -65,6 +67,7 @@ public sealed class ServerSupervisor(
             process.OutputDataReceived += (_, eventArgs) => { if (eventArgs.Data is not null) _ = WriteLogAsync(eventArgs.Data); };
             process.ErrorDataReceived += (_, eventArgs) => { if (eventArgs.Data is not null) _ = WriteLogAsync(eventArgs.Data); };
             process.Exited += (_, _) => _ = OnExitedAsync(process);
+            _manualStopRequests[process] = false;
             if (!process.Start()) throw new InvalidOperationException("Factorio process could not be started.");
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
@@ -82,10 +85,12 @@ public sealed class ServerSupervisor(
 
     public async Task<ServerStatus> StopAsync(CancellationToken cancellationToken)
     {
+        // Publish the manual-stop intent before waiting for the supervisor gate. The
+        // process exit callback can run concurrently with this method.
+        MarkManualStop(_process);
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            _manualStop = true;
             if (_process is null || _process.HasExited)
             {
                 RconEndpoint = null;
@@ -93,6 +98,7 @@ public sealed class ServerSupervisor(
                 return _status;
             }
             var process = _process;
+            MarkManualStop(process);
             await SetStatusAsync(new(ServerState.Stopping, process.Id, DateTimeOffset.UtcNow, 0, null));
             await process.StandardInput.WriteLineAsync("/quit");
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -132,6 +138,7 @@ public sealed class ServerSupervisor(
             var saveName = name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? name : $"{name}.zip";
             var savePath = Path.Combine(paths.Saves, saveName);
             if (File.Exists(savePath)) throw new InvalidOperationException("A save with that name already exists.");
+            await WriteExpansionModListAsync(settings, cancellationToken);
             var info = new ProcessStartInfo(executable) { WorkingDirectory = Path.GetDirectoryName(executable)!, UseShellExecute = false, RedirectStandardError = true };
             info.ArgumentList.Add("--create");
             info.ArgumentList.Add(savePath);
@@ -160,26 +167,46 @@ public sealed class ServerSupervisor(
 
     private async Task OnExitedAsync(Process exited)
     {
-        var wasManual = _manualStop;
+        var wasManual = _manualStopRequests.TryRemove(exited, out var manualStopRequested) && manualStopRequested;
         var exitCode = exited.ExitCode;
         var wasCurrent = ReferenceEquals(_process, exited);
         if (wasCurrent) { _process = null; RconEndpoint = null; }
-        if (wasManual)
+        if (!ShouldAutoRestartAfterExit(wasManual))
         {
             await SetStatusAsync(new(ServerState.Stopped, null, DateTimeOffset.UtcNow, 0, null));
             return;
         }
         var attempt = Math.Min(_status.RestartAttempt + 1, 6);
-        await SetStatusAsync(new(ServerState.Failed, null, DateTimeOffset.UtcNow, attempt, $"Factorio exited unexpectedly with code {exitCode}."));
+        var exitMessage = $"Factorio exited unexpectedly with code {exitCode}.";
+        if (eventHistory is not null)
+            await eventHistory.RecordAsync("unexpected-exit", "failure", DateTimeOffset.UtcNow, exitMessage);
+        if (notifications is not null)
+            await notifications.SendAsync("Factorio exited unexpectedly", exitMessage);
+        await SetStatusAsync(new(ServerState.Failed, null, DateTimeOffset.UtcNow, attempt, exitMessage));
         var delay = TimeSpan.FromSeconds(Math.Min(60, 2 << attempt));
         logger.LogWarning("Factorio exited with code {ExitCode}; restarting in {Delay}", exitCode, delay);
         await Task.Delay(delay);
-        try { await StartAsync(CancellationToken.None); }
+        try
+        {
+            await StartAsync(CancellationToken.None);
+            if (eventHistory is not null)
+                await eventHistory.RecordAsync("automatic-restart", "success", DateTimeOffset.UtcNow, $"Automatic restart attempt {attempt} succeeded.");
+        }
         catch (Exception exception)
         {
             logger.LogError(exception, "Automatic Factorio restart failed");
             await SetStatusAsync(new(ServerState.Failed, null, DateTimeOffset.UtcNow, attempt, exception.Message));
+            if (eventHistory is not null)
+                await eventHistory.RecordAsync("automatic-restart", "failure", DateTimeOffset.UtcNow, exception.Message);
         }
+    }
+
+    internal static bool ShouldAutoRestartAfterExit(bool manualStopRequested) => !manualStopRequested;
+
+    private void MarkManualStop(Process? process)
+    {
+        if (process is not null)
+            _manualStopRequests[process] = true;
     }
 
     private async Task WriteServerSettingsAsync(ServerSettings settings, CancellationToken cancellationToken)
@@ -189,17 +216,37 @@ public sealed class ServerSupervisor(
             name = settings.ServerName,
             description = settings.Description,
             max_players = settings.MaxPlayers,
-            visibility = new { @public = settings.VisibilityPublic, lan = true },
+            tags = settings.Tags,
+            visibility = new { @public = settings.VisibilityPublic, lan = settings.VisibilityLan },
             username = "",
             password = settings.ServerPassword ?? "",
             autosave_interval = settings.AutosaveMinutes,
-            autosave_slots = 5,
-            ignore_player_limit_for_returning_players = false,
-            allow_commands = "admins-only",
-            tags = new[] { "Docker", "Factorio Manager" }
+            autosave_slots = settings.AutosaveSlots,
+            ignore_player_limit_for_returning_players = settings.IgnorePlayerLimitForReturningPlayers,
+            allow_commands = settings.AllowCommands
         };
         await using var file = File.Create(Path.Combine(paths.Config, "server-settings.json"));
         await JsonSerializer.SerializeAsync(file, document, cancellationToken: cancellationToken);
+    }
+
+    private async Task WriteExpansionModListAsync(ServerSettings settings, CancellationToken cancellationToken)
+    {
+        var installed = await store.GetAsync<ModEntry[]>("mods", cancellationToken) ?? [];
+        var expansionEnabled = string.Equals(settings.Expansion, "space-age", StringComparison.OrdinalIgnoreCase);
+        var entries = new List<object>
+        {
+            new { name = "base", enabled = true },
+            new { name = "elevated-rails", enabled = expansionEnabled },
+            new { name = "quality", enabled = expansionEnabled },
+            new { name = "space-age", enabled = expansionEnabled }
+        };
+        entries.AddRange(installed
+            .Where(mod => !mod.Name.Equals("base", StringComparison.OrdinalIgnoreCase)
+                && !mod.Name.Equals("elevated-rails", StringComparison.OrdinalIgnoreCase)
+                && !mod.Name.Equals("quality", StringComparison.OrdinalIgnoreCase)
+                && !mod.Name.Equals("space-age", StringComparison.OrdinalIgnoreCase))
+            .Select(mod => (object)new { name = mod.Name, enabled = mod.Enabled }));
+        await File.WriteAllTextAsync(Path.Combine(paths.Mods, "mod-list.json"), JsonSerializer.Serialize(new { mods = entries }), cancellationToken);
     }
 
     private static async Task WriteMapGenerationSettingsAsync(MapGenerationSettings source, string path, CancellationToken cancellationToken)

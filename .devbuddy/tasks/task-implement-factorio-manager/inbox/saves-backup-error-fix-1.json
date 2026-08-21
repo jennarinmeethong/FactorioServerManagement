@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "saves-backup-error-fix-1",
+  "attempt": 1,
+  "parent_revision": 35,
+  "role": "developer",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Mapped manual backup InvalidOperationException responses to 409 when the server is running and 400 for invalid backup state, preserving useful errors.",
+  "blockers": [],
+  "evidence": [
+    {"ref": "src/FactorioManager.Api/Program.cs", "outcome": "POST /api/saves/backup now returns actionable 409/400 responses."},
+    {"ref": "tests/FactorioManager.Api.Tests/PersistenceTests.cs", "outcome": "Backup invalid-state regression coverage is present."},
+    {"ref": "dotnet test --no-restore", "outcome": "43 passed, 0 failed."},
+    {"ref": "bun run --cwd src/FactorioManager.Web build", "outcome": "Production frontend build passed."},
+    {"ref": "git diff --check", "outcome": "No whitespace errors."}
+  ],
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "required_approval": null,
+  "next_slice": {"read_keys": ["saves-lifecycle"], "read_paths": ["factorio-server-management:src/FactorioManager.Api/Program.cs", "factorio-server-management:src/FactorioManager.Web/src/App.tsx"], "summary": "Re-run QA and validate the completed Saves lifecycle."}
+}

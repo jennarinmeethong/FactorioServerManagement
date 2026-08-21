@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "accounts-mods-devops-1",
+  "attempt": 1,
+  "parent_revision": 26,
+  "role": "devops-sre",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "PASS",
+  "evidence": [
+    { "ref": "docker compose build", "outcome": "Build succeeded." },
+    { "ref": "docker compose up -d", "outcome": "factorio-manager recreated and healthy." },
+    { "ref": "GET /health", "outcome": "HTTP 200." },
+    { "ref": "GET /api/auth/status", "outcome": "HTTP 200 with configured=true; no secret exposed." },
+    { "ref": "Docker bind mount", "outcome": "C:\\Codes\\FactorioServerManagement\\data -> /data remains present with app.db, config, mods, and saves." }
+  ],
+  "next_slice": { "summary": "Refresh browser session and verify the live Accounts/Mods UI.", "read_paths": ["docker-compose.yml", "src/FactorioManager.Api/ApiJsonOptions.cs", "src/FactorioManager.Web/src/App.tsx"], "read_keys": ["api-role-json-contract", "mods-selection-layout"] },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "task_id": "implement-factorio-manager",
+  "slice_id": "viewer-role-fix-1",
+  "attempt": 1,
+  "parent_revision": 24,
+  "role": "developer",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Verified that the fresh setup flow creates admin as owner. The viewer default belongs to the Accounts-create flow. Added a fresh-setup regression test; the owner then added cookie-name invalidation for legacy role claims.",
+  "evidence": [
+    {"ref": "tests/FactorioManager.Api.Tests/PersistenceTests.cs", "outcome": "FreshSetupCreatesAdminAsOwner passes."},
+    {"ref": "tests/FactorioManager.Api.Tests", "outcome": "Full API test suite passes with 27 tests."},
+    {"ref": "data/app.db", "outcome": "Runtime database contains admin with owner role."}
+  ],
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "required_approval": null,
+  "blockers": [],
+  "next_slice": {"summary": "Run independent QA and Docker verification after cookie version bump.", "read_paths": ["src/FactorioManager.Api/Program.cs", "src/FactorioManager.Api/Accounts.cs", "tests/FactorioManager.Api.Tests/PersistenceTests.cs"], "read_keys": []}
+}

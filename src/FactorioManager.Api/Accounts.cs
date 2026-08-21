@@ -7,42 +7,57 @@ public sealed class AccountService(StateStore state)
 {
     public async Task EnsureInitialOwnerAsync(CancellationToken ct = default)
     {
-        // A persisted admin row can predate the role migration and still be viewer.
-        // Only the canonical bootstrap username is eligible for this repair, and it
-        // is promoted only when the database has no owner yet.
-        if (await state.GetAsync<string>("admin_password", ct) is null)
-            return;
-
         await using var connection = state.OpenConnection();
         await connection.OpenAsync(ct);
         var ownerCheck = connection.CreateCommand();
         ownerCheck.CommandText = "SELECT 1 FROM users WHERE role='owner' LIMIT 1";
-        if (await ownerCheck.ExecuteScalarAsync(ct) is not null)
-            return;
+        var hasOwner = await ownerCheck.ExecuteScalarAsync(ct) is not null;
 
         var adminLookup = connection.CreateCommand();
-        adminLookup.CommandText = "SELECT id FROM users WHERE username='admin' LIMIT 1";
-        var adminId = await adminLookup.ExecuteScalarAsync(ct) as string;
-        var now = DateTimeOffset.UtcNow.ToString("O");
-        if (adminId is not null)
+        adminLookup.CommandText = "SELECT id, role FROM users WHERE username='admin' LIMIT 1";
+        string? adminId = null;
+        string? adminRole = null;
+        await using (var adminReader = await adminLookup.ExecuteReaderAsync(ct))
         {
-            var promote = connection.CreateCommand();
-            promote.CommandText = "UPDATE users SET role='owner', security_stamp=$stamp, updated_at_utc=$now WHERE id=$id";
-            promote.Parameters.AddWithValue("$stamp", Guid.NewGuid().ToString("N"));
-            promote.Parameters.AddWithValue("$now", now);
-            promote.Parameters.AddWithValue("$id", adminId);
-            await promote.ExecuteNonQueryAsync(ct);
+            if (await adminReader.ReadAsync(ct))
+            {
+                adminId = adminReader.GetString(0);
+                adminRole = adminReader.GetString(1);
+            }
+        }
+
+        if (adminId is null)
+        {
+            var hash = await state.GetAsync<string>("admin_password", ct);
+            if (hash is null)
+                return;
+
+            var insertNow = DateTimeOffset.UtcNow.ToString("O");
+            var insert = connection.CreateCommand();
+            insert.CommandText = "INSERT INTO users(id,username,password_hash,role,security_stamp,created_at_utc,updated_at_utc) VALUES($id,'admin',$hash,'owner',$stamp,$now,$now)";
+            insert.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
+            insert.Parameters.AddWithValue("$hash", hash);
+            insert.Parameters.AddWithValue("$stamp", Guid.NewGuid().ToString("N"));
+            insert.Parameters.AddWithValue("$now", insertNow);
+            await insert.ExecuteNonQueryAsync(ct);
             return;
         }
 
-        var hash = await state.GetAsync<string>("admin_password", ct);
-        var insert = connection.CreateCommand();
-        insert.CommandText = "INSERT INTO users(id,username,password_hash,role,security_stamp,created_at_utc,updated_at_utc) VALUES($id,'admin',$hash,'owner',$stamp,$now,$now)";
-        insert.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("N"));
-        insert.Parameters.AddWithValue("$hash", hash);
-        insert.Parameters.AddWithValue("$stamp", Guid.NewGuid().ToString("N"));
-        insert.Parameters.AddWithValue("$now", now);
-        await insert.ExecuteNonQueryAsync(ct);
+        // The canonical bootstrap account must never remain a viewer. Do not gate
+        // this migration on app_state.admin_password: a failed/interrupted setup
+        // can persist one half of the bootstrap state, and startup must repair it.
+        var targetRole = !hasOwner ? "owner" : adminRole!.Equals("viewer", StringComparison.OrdinalIgnoreCase) ? "admin" : null;
+        if (targetRole is null)
+            return;
+
+        var now = DateTimeOffset.UtcNow.ToString("O");
+        var promote = connection.CreateCommand();
+        promote.CommandText = "UPDATE users SET role=$role, security_stamp=$stamp, updated_at_utc=$now WHERE id=$id";
+        promote.Parameters.AddWithValue("$role", targetRole);
+        promote.Parameters.AddWithValue("$stamp", Guid.NewGuid().ToString("N"));
+        promote.Parameters.AddWithValue("$now", now);
+        promote.Parameters.AddWithValue("$id", adminId);
+        await promote.ExecuteNonQueryAsync(ct);
     }
 
     public async Task EnsureOwnerFromLegacyAsync(CancellationToken ct=default) { var existing=await FindByUsernameAsync("admin",ct); if(existing is not null)return; var hash=await state.GetAsync<string>("admin_password",ct); if(hash is null)return; await using var c=state.OpenConnection(); await c.OpenAsync(ct); var now=DateTimeOffset.UtcNow.ToString("O"); var q=c.CreateCommand(); q.CommandText="INSERT INTO users(id,username,password_hash,role,security_stamp,created_at_utc,updated_at_utc) VALUES($id,'admin',$hash,'owner',$stamp,$now,$now)";q.Parameters.AddWithValue("$id",Guid.NewGuid().ToString("N"));q.Parameters.AddWithValue("$hash",hash);q.Parameters.AddWithValue("$stamp",Guid.NewGuid().ToString("N"));q.Parameters.AddWithValue("$now",now);await q.ExecuteNonQueryAsync(ct); }

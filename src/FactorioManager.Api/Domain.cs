@@ -49,23 +49,72 @@ public sealed record ServerSettings(
     bool VisibilityPublic = false,
     string? ServerPassword = null,
     int AutosaveMinutes = 10,
+    int AutosaveSlots = 5,
+    bool VisibilityLan = true,
+    bool IgnorePlayerLimitForReturningPlayers = false,
+    string AllowCommands = "admins-only",
+    string[]? Tags = null,
     string? ActiveSave = null,
     string Channel = "stable",
     string? ActiveVersion = null,
     int BackupIntervalHours = 24,
     int BackupRetention = 7,
     string TimeZone = "UTC",
-    MapGenerationSettings? MapGeneration = null)
+    MapGenerationSettings? MapGeneration = null,
+    string Expansion = "vanilla",
+    Dictionary<string, MapGenerationSettings>? MapGenerationProfiles = null,
+    bool ScheduledRestartEnabled = false,
+    string ScheduledRestartTime = "03:00",
+    bool ScheduledUpdateChecksEnabled = true,
+    bool AlertsEnabled = false)
 {
     public MapGenerationSettings MapGeneration { get; init; } = MapGeneration ?? new();
+    public string[] Tags { get; init; } = Tags ?? ["Docker", "Factorio Manager"];
+    public Dictionary<string, MapGenerationSettings> MapGenerationProfiles { get; init; } =
+        MapGenerationProfiles ?? new Dictionary<string, MapGenerationSettings>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["vanilla"] = MapGeneration ?? new(),
+            ["space-age"] = MapGeneration ?? new()
+        };
 }
 
 public sealed record ServerStatus(ServerState State, int? ProcessId, DateTimeOffset ChangedAt, int RestartAttempt, string? Message);
 public sealed record SetupRequest(string Code, string Password, string? FactorioUsername, string? FactorioToken);
 public sealed record LoginRequest(string Password, string? Username = null);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
-public sealed record SecretSettings(string? FactorioUsername, string? FactorioToken);
-public sealed record FactorioCredentialsRequest(string Username, string Token);
+public sealed record SecretSettings(
+    string? FactorioUsername,
+    string? FactorioToken,
+    string? DiscordWebhookUrl = null,
+    string? TelegramBotToken = null,
+    string? TelegramChatId = null);
+public sealed record NotificationSettingsRequest(
+    string? DiscordWebhookUrl = null,
+    string? TelegramBotToken = null,
+    string? TelegramChatId = null,
+    bool Enabled = false);
+public sealed record NotificationSettingsStatus(
+    bool Enabled,
+    bool DiscordConfigured,
+    bool TelegramConfigured);
+public sealed record MaintenanceRunRequest(bool Confirm);
+public sealed record ConfigurationBundle(
+    int SchemaVersion,
+    DateTimeOffset ExportedAtUtc,
+    ServerSettings Settings,
+    ModEntry[] Mods,
+    ModProfile[] ModProfiles);
+public sealed record ConfigurationImportRequest(ConfigurationBundle Bundle, bool Confirm);
+public sealed record HealthSample(
+    DateTimeOffset Timestamp,
+    double CpuUsagePercent,
+    long WorkingSetBytes,
+    long? DataFreeBytes,
+    int SaveCount,
+    int BackupCount,
+    int VersionCount,
+    int ModFileCount);
+public sealed record FactorioCredentialsRequest(string? Username = null, string? Token = null);
 public enum ModSource { Portal, Local }
 public sealed record ModEntry(
     string Name,
@@ -89,7 +138,7 @@ public sealed record ModPreflightRequest(string Operation, string[] Names, strin
 public sealed record ModPreflightResult(string Operation, bool Allowed, bool RequiresBackup, string? ActiveSave, string? ActiveVersion, ModEntry[] PlannedMods, string[] Blockers, string[] Warnings, string[] Downloads);
 public sealed record ModRecoveryStatus(bool Pending, string? Message, string[] QuarantinedFiles, DateTimeOffset? StartedAt);
 public sealed record ModSaveBaseline(string SaveName, ModEntry[] Mods, DateTimeOffset CapturedAt);
-public sealed record VersionApplyRequest(string Version, string Channel);
+public sealed record VersionApplyRequest(string Version, string Channel, bool Confirm = false);
 public sealed record PlayerListRequest(string PlayerName);
 public sealed record LivePlayer(string Name, int? OnlineSinceSeconds = null);
 public sealed record LiveChatRequest(string Message);
