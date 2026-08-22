@@ -79,6 +79,64 @@ public sealed record ServerSettings(
         };
 }
 
+public sealed record ModSettingDefinition(
+    string Id,
+    string ModName,
+    string SettingType,
+    string ValueType,
+    object? Default = null,
+    double? Minimum = null,
+    double? Maximum = null,
+    string[]? AllowedValues = null,
+    bool Required = false);
+public sealed record ModSettingValue(string Type, object? Value)
+{
+    public static ModSettingValue Boolean(bool value) => new("bool", value);
+    public static ModSettingValue Integer(long value) => new("int", value);
+    public static ModSettingValue Double(double value) => new("double", value);
+    public static ModSettingValue String(string value) => new("string", value);
+    public static ModSettingValue Enum(string value) => new("enum", value);
+    public static ModSettingValue Color(string value) => new("color", value);
+    public static ModSettingValue Color(double r, double g, double b, double a = 1) => new("color", new ModSettingColor(r, g, b, a));
+}
+public sealed record ModSettingColor(double R, double G, double B, double A);
+public sealed record EnabledModCompatibility(string Name, string Version, string? Sha256);
+public sealed record ModSettingsCompatibility(
+    string FactorioVersion,
+    string Expansion,
+    string? SaveName,
+    string? SaveSha256,
+    EnabledModCompatibility[] EnabledMods,
+    string CatalogFingerprint);
+public sealed record ModSettingsArtifact(
+    int SchemaVersion,
+    DateTimeOffset GeneratedAtUtc,
+    ModSettingsCompatibility Compatibility,
+    Dictionary<string, ModSettingValue> Values);
+public sealed record ModSettingsDocument(ModSettingsArtifact Artifact, ModSettingDefinition[] Definitions, string[] Diagnostics);
+public sealed record ModSettingsUpdateRequest(ModSettingsArtifact Artifact, bool ConfirmStopped = false);
+
+public sealed record MapExchangeCompatibility(
+    string FactorioVersion,
+    string Expansion,
+    EnabledModCompatibility[] EnabledMods,
+    string CatalogFingerprint,
+    string InputFingerprint);
+public sealed record MapExchangeImportRequest(string Exchange, string SaveName, bool ConfirmStopped = false);
+public sealed record MapExchangeExportRequest(string SaveName, bool ConfirmStopped = false);
+public sealed record MapExchangeImportResult(string SaveName, MapExchangeCompatibility Compatibility, string Message);
+public sealed record MapExchangeExportResult(string Exchange, MapExchangeCompatibility Compatibility);
+public sealed record MapPreviewRequest(MapGenerationSettings MapGeneration, string Planet = "Nauvis", int? Seed = null, int Size = 512, string Offset = "0,0", bool ConfirmStopped = false);
+public sealed record MapPreviewResult(
+    string Planet,
+    int Seed,
+    int Size,
+    string ContentType,
+    string Base64Png,
+    long Length,
+    string Sha256,
+    MapExchangeCompatibility Compatibility);
+
 public sealed record ServerStatus(ServerState State, int? ProcessId, DateTimeOffset ChangedAt, int RestartAttempt, string? Message);
 public sealed record SetupRequest(string Code, string Password, string? FactorioUsername, string? FactorioToken);
 public sealed record LoginRequest(string Password, string? Username = null);

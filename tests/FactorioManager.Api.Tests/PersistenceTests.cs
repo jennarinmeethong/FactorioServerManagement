@@ -730,6 +730,127 @@ public sealed class PersistenceTests : IDisposable
         Assert.Equal("123", saved.TelegramChatId);
     }
 
+    [Fact]
+    public void ModSettingsValidationAcceptsTypedPrimitivesAndRejectsUnknownOrOutOfRangeValues()
+    {
+        var definitions = new[]
+        {
+            new ModSettingDefinition("enabled", "example", "startup", "bool", false),
+            new ModSettingDefinition("count", "example", "runtime-global", "int", 1, 0, 10),
+            new ModSettingDefinition("mode", "example", "startup", "enum", "safe", AllowedValues: ["safe", "fast"])
+        };
+        var compatibility = new ModSettingsCompatibility("2.0.77", "vanilla", "save.zip", "hash", [], "catalog");
+        var valid = new ModSettingsDocument(new(1, DateTimeOffset.UtcNow, compatibility, new(StringComparer.Ordinal)
+        {
+            ["enabled"] = ModSettingValue.Boolean(true), ["count"] = ModSettingValue.Integer(5), ["mode"] = ModSettingValue.Enum("safe")
+        }), definitions, []);
+        ModSettingsService.Validate(valid);
+        Assert.Throws<InvalidOperationException>(() => ModSettingsService.Validate(valid with { Artifact = valid.Artifact with { Values = new(valid.Artifact.Values) { ["unknown"] = ModSettingValue.String("x") } } }));
+        Assert.Throws<InvalidOperationException>(() => ModSettingsService.Validate(valid with { Artifact = valid.Artifact with { Values = new(valid.Artifact.Values) { ["count"] = ModSettingValue.Integer(11) } } }));
+    }
+
+    [Fact]
+    public void ModSettingsColorValidationRejectsNestedUnknownKeysAndRoundTripsTypedColor()
+    {
+        var definition = new ModSettingDefinition("tint", "example", "startup", "color", ModSettingValue.Color(0.1, 0.2, 0.3, 0.4));
+        var compatibility = new ModSettingsCompatibility("2.0.77", "vanilla", "save.zip", "hash", [], "catalog");
+        var valid = new ModSettingsDocument(new(1, DateTimeOffset.UtcNow, compatibility, new(StringComparer.Ordinal) { ["tint"] = ModSettingValue.Color(0.1, 0.2, 0.3, 0.4) }), [definition], []);
+        ModSettingsService.Validate(valid);
+        var json = JsonSerializer.Serialize(valid, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Contains("\"r\":0.1", json);
+        Assert.Throws<InvalidOperationException>(() => ModSettingsService.Validate(valid with { Artifact = valid.Artifact with { Values = new(valid.Artifact.Values) { ["tint"] = new("color", JsonDocument.Parse("{\"r\":0.1,\"g\":0.2,\"b\":0.3,\"a\":0.4,\"x\":0}").RootElement) } } }));
+        Assert.Throws<InvalidOperationException>(() => ModSettingsService.Validate(valid with { Artifact = valid.Artifact with { Values = new(valid.Artifact.Values) { ["tint"] = new("color", JsonDocument.Parse("{\"r\":0.1,\"g\":2,\"b\":0.3,\"a\":0.4}").RootElement) } } }));
+    }
+
+    [Fact]
+    public async Task ModSettingsDiscoveryOmitsMissingMalformedAndWrongTypeDefaults()
+    {
+        var paths = CreatePaths(); paths.EnsureCreated();
+        var prototypes = Path.Combine(paths.Versions, "2.0.77", "data", "base", "prototypes");
+        Directory.CreateDirectory(prototypes);
+        await File.WriteAllTextAsync(Path.Combine(prototypes, "settings.lua"), """
+            data:extend({
+                {type = "bool-setting", name = "valid", setting_type = "startup", default_value = true},
+                {type = "int-setting", name = "missing", setting_type = "startup"},
+                {type = "double-setting", name = "malformed", setting_type = "startup", default_value = nope},
+                {type = "bool-setting", name = "wrong-type", setting_type = "startup", default_value = "true"},
+                {type = "color-setting", name = "bad-color", setting_type = "startup", default_value = {r = 0, g = 2, b = 0, a = 1}}
+            })
+            """);
+
+        var document = await new ModSettingsService(paths, await CreateStoreAsync()).DiscoverAsync(new ServerSettings(ActiveVersion: "2.0.77"));
+
+        Assert.Equal(["valid"], document.Definitions.Select(definition => definition.Id));
+        Assert.Contains(document.Diagnostics, diagnostic => diagnostic.Contains("missing", StringComparison.Ordinal));
+        Assert.Contains(document.Diagnostics, diagnostic => diagnostic.Contains("malformed", StringComparison.Ordinal));
+        Assert.Contains(document.Diagnostics, diagnostic => diagnostic.Contains("wrong-type", StringComparison.Ordinal));
+        Assert.Contains(document.Diagnostics, diagnostic => diagnostic.Contains("bad-color", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ModSettingsDiscoveryRejectsNonIntegerNumericTokensInDefaultsBoundsAndAllowedValues()
+    {
+        var paths = CreatePaths(); paths.EnsureCreated();
+        var prototypes = Path.Combine(paths.Versions, "2.0.77", "data", "base", "prototypes");
+        Directory.CreateDirectory(prototypes);
+        await File.WriteAllTextAsync(Path.Combine(prototypes, "settings.lua"), """
+            data:extend({
+                {type = "int-setting", name = "bad-default", setting_type = "startup", default_value = 1.2},
+                {type = "int-setting", name = "bad-minimum", setting_type = "startup", default_value = 1, minimum_value = 0.5},
+                {type = "int-setting", name = "bad-maximum", setting_type = "startup", default_value = 1, maximum_value = 2.5},
+                {type = "int-setting", name = "bad-allowed", setting_type = "startup", default_value = 1, allowed_values = {1, 2.5}}
+            })
+            """);
+
+        var document = await new ModSettingsService(paths, await CreateStoreAsync()).DiscoverAsync(new ServerSettings(ActiveVersion: "2.0.77"));
+
+        Assert.Empty(document.Definitions);
+        Assert.Contains(document.Diagnostics, diagnostic => diagnostic.Contains("bad-default", StringComparison.Ordinal));
+        Assert.Contains(document.Diagnostics, diagnostic => diagnostic.Contains("bad-minimum", StringComparison.Ordinal));
+        Assert.Contains(document.Diagnostics, diagnostic => diagnostic.Contains("bad-maximum", StringComparison.Ordinal));
+        Assert.Contains(document.Diagnostics, diagnostic => diagnostic.Contains("bad-allowed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ModSettingsJsonRejectsMissingOrNullWrapperValues()
+    {
+        using var missing = JsonDocument.Parse("""
+            {"artifact":{"schemaVersion":1,"generatedAtUtc":"2026-01-01T00:00:00Z","compatibility":{"factorioVersion":"2.0.77","expansion":"vanilla","saveName":null,"saveSha256":null,"enabledMods":[],"catalogFingerprint":"x"},"values":{"enabled":{"type":"bool"}}}}
+            """);
+        using var nullValue = JsonDocument.Parse("""
+            {"artifact":{"schemaVersion":1,"generatedAtUtc":"2026-01-01T00:00:00Z","compatibility":{"factorioVersion":"2.0.77","expansion":"vanilla","saveName":null,"saveSha256":null,"enabledMods":[],"catalogFingerprint":"x"},"values":{"enabled":{"type":"bool","value":null}}}}
+            """);
+
+        Assert.Throws<InvalidOperationException>(() => ModSettingsService.ValidateUpdateJson(missing.RootElement));
+        Assert.Throws<InvalidOperationException>(() => ModSettingsService.ValidateUpdateJson(nullValue.RootElement));
+    }
+
+    [Fact]
+    public async Task ModSettingsReadRejectsUnsupportedSchemaVersion()
+    {
+        var paths = CreatePaths(); paths.EnsureCreated();
+        var service = new ModSettingsService(paths, await CreateStoreAsync());
+        await File.WriteAllTextAsync(service.ArtifactPath, """
+            {"artifact":{"schemaVersion":99,"generatedAtUtc":"2026-01-01T00:00:00Z","compatibility":{"factorioVersion":"2.0.77","expansion":"vanilla","saveName":null,"saveSha256":null,"enabledMods":[],"catalogFingerprint":"x"},"values":{}},"definitions":[],"diagnostics":[]}
+            """);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => service.ReadAsync());
+
+        Assert.Contains("schema version", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ModSettingsValidationRejectsMalformedDefinitionsWithoutValues()
+    {
+        var compatibility = new ModSettingsCompatibility("2.0.77", "vanilla", null, null, [], "catalog");
+        var document = new ModSettingsDocument(new(1, DateTimeOffset.UtcNow, compatibility, new(StringComparer.Ordinal)),
+            [new ModSettingDefinition("", "example", "not-a-scope", "not-a-type", null)], []);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => ModSettingsService.Validate(document));
+
+        Assert.Contains("definition", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private async Task<StateStore> CreateStoreAsync()
     {
         var store = new StateStore(CreatePaths());

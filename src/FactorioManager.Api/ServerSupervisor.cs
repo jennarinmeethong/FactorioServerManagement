@@ -14,7 +14,8 @@ public sealed class ServerSupervisor(
     ILogger<ServerSupervisor> logger,
     ServerEventHistoryService? eventHistory = null,
     NotificationService? notifications = null,
-    MapControlCatalogService? catalogs = null)
+    MapControlCatalogService? catalogs = null,
+    ModSettingsService? modSettings = null)
 {
     private readonly MapControlCatalogService? _catalogs = catalogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -44,6 +45,18 @@ public sealed class ServerSupervisor(
             if (!File.Exists(executable)) throw new InvalidOperationException($"Factorio executable was not found for version {settings.ActiveVersion}.");
             if (!File.Exists(save)) throw new InvalidOperationException("The selected save no longer exists.");
 
+            if (modSettings is null || !File.Exists(modSettings.ArtifactPath))
+                throw new InvalidOperationException("The mod-settings artifact is missing; discover and save mod settings before starting the server.");
+            var document = await modSettings.ReadAsync(cancellationToken) ?? throw new InvalidOperationException("The mod-settings artifact could not be loaded.");
+            // ReadAsync and Validate both fail closed on schema and definition errors before binary materialization.
+            ModSettingsService.Validate(document);
+            var discovered = await modSettings.DiscoverAsync(settings, cancellationToken);
+            if (JsonSerializer.Serialize(document.Artifact.Compatibility) != JsonSerializer.Serialize(discovered.Artifact.Compatibility))
+                throw new InvalidOperationException("The mod-settings artifact is stale for the selected version, save, or enabled mods.");
+            await modSettings.MaterializeFactorioInputAsync(document, cancellationToken);
+            if (!File.Exists(modSettings.FactorioInputPath) || new FileInfo(modSettings.FactorioInputPath).Length == 0)
+                throw new InvalidOperationException("The mod-settings binary input could not be freshly materialized.");
+
             await WriteExpansionModListAsync(settings, cancellationToken);
             await WriteServerSettingsAsync(settings, cancellationToken);
             await SetStatusAsync(new(ServerState.Starting, null, DateTimeOffset.UtcNow, _status.RestartAttempt, null));
@@ -59,6 +72,8 @@ public sealed class ServerSupervisor(
             startInfo.ArgumentList.Add(save);
             startInfo.ArgumentList.Add("--server-settings");
             startInfo.ArgumentList.Add(Path.Combine(paths.Config, "server-settings.json"));
+            startInfo.ArgumentList.Add("--mod-settings");
+            startInfo.ArgumentList.Add(modSettings.FactorioInputPath);
             // The RCON listener is process-local and never exposed by Docker/network configuration.
             var rconPort = GetFreeLoopbackPort();
             var rconPassword = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));

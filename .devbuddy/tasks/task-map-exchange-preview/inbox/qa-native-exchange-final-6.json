@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "task_id": "map-exchange-preview",
+  "slice_id": "qa-native-exchange-final-6",
+  "attempt": 1,
+  "parent_revision": 19,
+  "role": "qa",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "status": "completed",
+  "result": "PASS. The CSRF/audit regression is fixed and native map exchange/preview safeguards meet the requested QA checks.",
+  "evidence": [
+    {"ref": "dotnet test FactorioServerManager.sln --configuration Release --no-restore --nologo", "outcome": "Passed 101/101, failed 0, skipped 0."},
+    {"ref": "dotnet build FactorioServerManager.sln --configuration Release --no-restore --nologo", "outcome": "Succeeded with 0 warnings and 0 errors."},
+    {"ref": "src/FactorioManager.Api/NativeMapRoutes.cs; tests/FactorioManager.Api.Tests/NativeMapRouteContractTests.cs", "outcome": "Mutation authorization/audit is outermost around CSRF; mapped invalid-CSRF native import POST returns 403 and records one denied audit event."},
+    {"ref": "src/FactorioManager.Api/MapExchange.cs; src/FactorioManager.Api/NativeRuntime.cs", "outcome": "Native execution is fail-closed, isolated, compatibility-revalidated, ActiveSave-preserving, atomic on import, deterministic-preview-evidence-producing, and bounded-cleanup."},
+    {"ref": "tests/FactorioManager.Api.Tests/NativeMapExchangeIntegrationTests.cs", "outcome": "Linux opt-in coverage exists for export/import source-and-ActiveSave preservation and repeated Nauvis/Vulcanus preview hash/length determinism; Windows host has no FACTORIO_NATIVE_* variables, so these tests safely no-op here."}
+  ],
+  "next_slice": {"summary": "Close the task ledger after recording this PASS.", "read_paths": [], "read_keys": []},
+  "knowledge_keys": ["native-map-exchange-csrf-audit-boundary", "native-map-exchange-safety-qa", "native-integration-opt-in-linux"],
+  "knowledge_proposal": "Revision 19 is independently verified: Release tests/build pass, denied native CSRF POSTs are audited, and native execution remains fail-closed, isolated, evidence-producing, and cleanup-bounded. Live native integration was not exercised on this Windows host because its explicit FACTORIO_NATIVE_* opt-in fixture is absent.",
+  "blockers": [],
+  "required_approval": null
+}

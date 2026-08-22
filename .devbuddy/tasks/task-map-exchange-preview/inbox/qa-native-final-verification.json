@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "task_id": "map-exchange-preview",
+  "slice_id": "qa-native-final-verification",
+  "attempt": 1,
+  "parent_revision": 6,
+  "role": "qa",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "PASS: native feasibility harness verified. Timeout and caller cancellation kill the entire process tree, await uncancellable exit, dispose the process, and caller cancellation rethrows. Output retention is capped at 64 KiB per stream with truncation marking. Job directories are unique and independently disposable. Readiness fails closed when the complete runtime is absent. PNG validation and SHA-256 evidence are deterministic. No map-exchange/native-preview endpoint or misleading map-preview UI is exposed. Full solution tests passed 75/75 and full solution build succeeded. Native exchange/preview execution remains blocked pending an approved complete runtime fixture.",
+  "evidence": [
+    {"ref": "src/FactorioManager.Api/NativeRuntime.cs:101-158; tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs:60-90", "outcome": "Timeout and caller-cancellation cleanup kills/awaits/disposes the child process and rethrows caller cancellation; focused tests pass."},
+    {"ref": "src/FactorioManager.Api/NativeRuntime.cs:53-75; tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs:30-43", "outcome": "Job directory isolation and independent disposal are verified."},
+    {"ref": "src/FactorioManager.Api/NativeRuntime.cs:19-50; tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs:19-28", "outcome": "Complete-runtime readiness checks fail closed without executable/prototype content."},
+    {"ref": "src/FactorioManager.Api/NativeRuntime.cs:179-195; tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs:45-58", "outcome": "PNG signature and deterministic SHA-256 evidence are verified."},
+    {"ref": "src/FactorioManager.Api/Program.cs:132-592; src/FactorioManager.Web/src/App.tsx:1-110,342-377", "outcome": "Route/UI inspection found no map-exchange/native-preview feature; existing preview wording is unrelated mod preflight."},
+    {"ref": "FactorioServerManager.sln", "outcome": "dotnet test --no-restore: 75 passed, 0 failed; dotnet build --no-restore: succeeded."}
+  ],
+  "next_slice": {
+    "summary": "Native feasibility harness is complete; native map exchange/preview remains intentionally blocked until an approved complete Factorio runtime fixture exists.",
+    "read_paths": ["factorio-server-management:src/FactorioManager.Api/NativeRuntime.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs", "factorio-server-management:src/FactorioManager.Api/Program.cs", "factorio-server-management:src/FactorioManager.Web/src/App.tsx"],
+    "read_keys": ["native process cleanup", "bounded output", "job isolation", "fail-closed readiness", "deterministic PNG evidence", "route/UI absence"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": ["Native exchange/preview execution remains blocked pending an approved complete Factorio runtime fixture."],
+  "required_approval": null
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "task_id": "map-exchange-preview",
+  "slice_id": "developer-native-exchange-route-final",
+  "attempt": 1,
+  "parent_revision": 15,
+  "role": "developer",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "status": "completed",
+  "result": "Hardened native PE/ELF x64 header validation and added precise malformed-header coverage. Extracted native-route security mapping and contract coverage for authenticated API, CSRF mutation filtering, and admin/owner audited mutations. Linux HTTP native round-trip remains opt-in because no TestServer dependency or native environment variables are configured on this Windows host; existing opt-in Linux service round-trip remains the native-process test.",
+  "evidence": [
+    {"ref": "src/FactorioManager.Api/NativeRuntime.cs; tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs", "outcome": "Valid, truncated, corrupt, wrong-architecture, and real Linux 2.0.77 fixture executable header cases are covered."},
+    {"ref": "src/FactorioManager.Api/NativeMapRoutes.cs; tests/FactorioManager.Api.Tests/NativeMapRouteContractTests.cs; src/FactorioManager.Api/Security.cs; src/FactorioManager.Api/Program.cs", "outcome": "Native route contract verifies four endpoints, authenticated /api metadata, CSRF mutation boundary, and admin/owner audited mutation policy."},
+    {"ref": "dotnet test FactorioServerManager.sln --no-restore", "outcome": "Passed 100/100 tests before the final diagnostic-only parser correction; orchestrator rerun is required."},
+    {"ref": "dotnet build FactorioServerManager.sln --no-restore", "outcome": "Succeeded with 0 warnings/errors before final diagnostic-only parser correction."}
+  ],
+  "next_slice": {
+    "summary": "Rerun full tests/build after the final parser correction and close the task; native HTTP round-trip remains an explicit Linux opt-in path.",
+    "read_paths": ["factorio-server-management:src/FactorioManager.Api/NativeRuntime.cs", "factorio-server-management:src/FactorioManager.Api/NativeMapRoutes.cs", "factorio-server-management:src/FactorioManager.Api/Security.cs", "factorio-server-management:src/FactorioManager.Api/Program.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeMapRouteContractTests.cs"],
+    "read_keys": ["NativeRuntimeDetector.HasHostCompatibleExecutableHeader", "NativeMapRoutes.Contract", "ApiMutationAuthorizationFilter.Validate"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

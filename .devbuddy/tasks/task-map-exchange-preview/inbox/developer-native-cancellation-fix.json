@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "task_id": "map-exchange-preview",
+  "slice_id": "developer-native-cancellation-fix",
+  "attempt": 1,
+  "parent_revision": 5,
+  "role": "developer",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "status": "completed",
+  "result": "Fixed NativeProcessRunner cleanup for timeout and caller cancellation, including kill-and-await behavior, bounded output capture, disposal, and seam-based focused tests. No runtime download or endpoint changes.",
+  "evidence": [
+    {"ref": "dotnet test tests/FactorioManager.Api.Tests/FactorioManager.Api.Tests.csproj --no-restore --filter FullyQualifiedName~NativeRuntimeTests", "outcome": "Passed 5 tests."},
+    {"ref": "dotnet test tests/FactorioManager.Api.Tests/FactorioManager.Api.Tests.csproj --no-restore", "outcome": "Passed 75 tests, 0 failed; independently re-run by orchestrator."},
+    {"ref": "dotnet build FactorioServerManager.sln --no-restore", "outcome": "Build succeeded with 0 warnings and 0 errors; independently re-run by orchestrator."}
+  ],
+  "next_slice": {
+    "summary": "No follow-up implementation required.",
+    "read_paths": ["factorio-server-management:src/FactorioManager.Api/NativeRuntime.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs"],
+    "read_keys": []
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

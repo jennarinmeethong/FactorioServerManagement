@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "task_id": "map-exchange-preview",
+  "slice_id": "developer-native-exchange-orchestration",
+  "attempt": 1,
+  "parent_revision": 9,
+  "role": "developer",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "status": "completed",
+  "result": "Implemented fail-closed isolated native exchange import/export and map preview orchestration with stopped-state confirmation, API authorization/CSRF/audit conventions, compatibility fingerprints, atomic import promotion, source-save hashing, bounded native job output, and Saves UI blockers. Added opt-in native preview integration coverage. The complete runtime fixture is now present and --version plus native preview commands have been verified in Docker; full import/export route round-trip verification remains for QA.",
+  "evidence": [
+    {"ref": "src/FactorioManager.Api/Domain.cs", "outcome": "Added exchange, compatibility, import/export, and preview request/result records."},
+    {"ref": "src/FactorioManager.Api/MapExchange.cs", "outcome": "Added isolated native job orchestration using the proven Factorio Lua helper shapes, compatibility/archive hashes, bounded output, source-save hashing, and atomic promotion."},
+    {"ref": "src/FactorioManager.Api/NativeRuntime.cs", "outcome": "Extended isolated job paths and platform executable detection."},
+    {"ref": "src/FactorioManager.Api/Program.cs", "outcome": "Registered native service and added readiness, import, export, and preview endpoints under the authenticated API/CSRF/audit group."},
+    {"ref": "src/FactorioManager.Web/src/App.tsx", "outcome": "Added stopped-state native exchange/preview UI with readiness blockers and explicit confirmation."},
+    {"ref": "tests/FactorioManager.Api.Tests/NativeMapExchangeIntegrationTests.cs", "outcome": "Added opt-in native Nauvis/Vulcanus preview coverage gated by explicit runtime environment variables; no runtime download."},
+    {"ref": "dotnet test FactorioServerManager.sln --no-restore", "outcome": "Passed 76 tests, 0 failed; independently re-run by orchestrator."},
+    {"ref": "dotnet build FactorioServerManager.sln --no-restore", "outcome": "Build succeeded with 0 warnings and 0 errors; independently re-run by orchestrator."},
+    {"ref": "TypeScript/Vite production build", "outcome": "Production build succeeded; only existing SignalR Rollup annotation warnings were emitted."}
+  ],
+  "next_slice": {
+    "summary": "Run independent high-risk QA against the complete 2.0.77 fixture, including native preview determinism and import/export round-trip/no-source-mutation checks; fix any native/API gaps.",
+    "read_paths": ["factorio-server-management:tests/FactorioManager.Api.Tests/NativeMapExchangeIntegrationTests.cs", "factorio-server-management:src/FactorioManager.Api/MapExchange.cs", "factorio-server-management:src/FactorioManager.Api/NativeRuntime.cs", "factorio-server-management:data/versions/2.0.77/**"],
+    "read_keys": ["FACTORIO_NATIVE_EXECUTABLE", "FACTORIO_NATIVE_DATA", "FACTORIO_NATIVE_SPACE_AGE", "helpers.parse_map_exchange_string", "game.get_map_exchange_string", "native import/export route gates"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": ["Native import/export route round-trip and source-save non-mutation are not yet independently proven; native preview was proven separately against the fixture."],
+  "required_approval": null
+}

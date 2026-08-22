@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "task_id": "map-exchange-preview",
+  "slice_id": "qa-native-exchange-final-4",
+  "attempt": 1,
+  "parent_revision": 16,
+  "role": "qa",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "status": "blocked",
+  "result": "QA passed PE/ELF architecture parsing, bounded cleanup, stopped/confirmation gates, compatibility revalidation, isolated staging/atomic promotion, and opt-in Linux round-trip coverage. One concrete defect remains: CSRF-denied native POST requests are not audited because NativeMapRoutes installs CsrfFilter before ApiMutationAuthorizationFilter, so CSRF short-circuits before the audit-writing filter.",
+  "evidence": [
+    {"ref": "dotnet test tests/FactorioManager.Api.Tests/FactorioManager.Api.Tests.csproj --no-restore", "outcome": "Passed 100/100 tests, 0 failures; native integration safely no-ops without FACTORIO_NATIVE_* on Windows."},
+    {"ref": "dotnet build src/FactorioManager.Api/FactorioManager.Api.csproj --no-restore --configuration Release", "outcome": "Succeeded with 0 warnings/errors."},
+    {"ref": "src/FactorioManager.Api/NativeRuntime.cs", "outcome": "Parser validates PE x64 and ELF x86_64 headers; cleanup is bounded."},
+    {"ref": "src/FactorioManager.Api/NativeMapRoutes.cs:32-35; src/FactorioManager.Api/Security.cs:9-18,25-48", "outcome": "Authenticated API, CSRF, and admin/owner authorization are present, but filter order lets CSRF rejection return before audit logging."},
+    {"ref": "src/FactorioManager.Api/MapExchange.cs", "outcome": "Native operations snapshot/revalidate compatibility, preserve ActiveSave, and atomically promote staged saves."}
+  ],
+  "next_slice": {
+    "summary": "Ensure audit filter wraps CSRF validation for native mutation routes and add a denied-CSRF audit regression test, then rerun final QA.",
+    "read_paths": ["factorio-server-management:src/FactorioManager.Api/NativeMapRoutes.cs", "factorio-server-management:src/FactorioManager.Api/Security.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeMapRouteContractTests.cs"],
+    "read_keys": ["CSRF filter ordering", "audit denied outcome", "native mutation routes"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": ["CSRF-denied native POST requests are not audited because the CSRF filter is registered before the audit-writing mutation filter."],
+  "required_approval": null
+}

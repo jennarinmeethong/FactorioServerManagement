@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.IO.Compression;
 using System.Threading.RateLimiting;
+using System.Text.Json;
 using FactorioManager.Api;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -24,9 +25,13 @@ builder.Services.AddSingleton<ServerSupervisor>();
 builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton<VersionService>();
 builder.Services.AddSingleton<MapControlCatalogService>();
+builder.Services.AddSingleton<NativeRuntimeDetector>();
+builder.Services.AddSingleton<INativeProcessRunner, NativeProcessRunner>();
+builder.Services.AddSingleton<NativeMapExchangeService>();
 builder.Services.AddSingleton<MaintenanceHistoryService>();
 builder.Services.AddSingleton<ServerEventHistoryService>();
 builder.Services.AddSingleton<ModService>();
+builder.Services.AddSingleton<ModSettingsService>();
 builder.Services.AddSingleton<PlayerListService>();
 builder.Services.AddSingleton<SourceRconClient>();
 builder.Services.AddSingleton<LivePlayerService>();
@@ -227,10 +232,43 @@ owner.MapPost("/config/import", async (ConfigurationImportRequest request, State
 }).AddEndpointFilter(CsrfFilter.Validate);
 
 var api = app.MapGroup("/api").RequireAuthorization().AddEndpointFilter(CsrfFilter.Validate);
-api.AddEndpointFilter((EndpointFilterInvocationContext context, EndpointFilterDelegate next) =>
-    AuditAndAuthorizeMutationAsync(context, next));
+api.AddEndpointFilter(ApiMutationAuthorizationFilter.Validate);
 api.MapGet("/status", async (ServerSupervisor supervisor) => Results.Ok(await supervisor.GetStatusAsync()));
 api.MapGet("/settings", async (StateStore state, HttpContext context) => Results.Ok(await state.GetAsync<ServerSettings>("settings", context.RequestAborted)));
+api.MapGet("/mod-settings/catalog", async (ModSettingsService service, StateStore state, HttpContext context) =>
+{
+    var settings = await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings();
+    try { return Results.Ok(await service.DiscoverAsync(settings, context.RequestAborted)); }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message, "Mod-settings discovery failed"); }
+});
+api.MapGet("/mod-settings", async (ModSettingsService service, StateStore state, HttpContext context) =>
+{
+    var document = await service.ReadAsync(context.RequestAborted);
+    if (document is null) return Results.NotFound();
+    var settings = await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings();
+    var current = (await service.DiscoverAsync(settings, context.RequestAborted)).Artifact.Compatibility;
+    var stale = JsonSerializer.Serialize(document.Artifact.Compatibility) != JsonSerializer.Serialize(current);
+    return Results.Ok(new { document, stale });
+});
+api.MapPut("/mod-settings", async (HttpRequest http, ModSettingsService service, StateStore state, ServerSupervisor supervisor, HttpContext context) =>
+{
+    if (!context.User.HasClaim("role", "owner") && !context.User.HasClaim("role", "admin")) return ApiErrors.Forbidden(context);
+    using var json = await JsonDocument.ParseAsync(http.Body, cancellationToken: context.RequestAborted);
+    try { ModSettingsService.ValidateUpdateJson(json.RootElement); }
+    catch (Exception exception) when (exception is InvalidOperationException or KeyNotFoundException or JsonException) { return ApiErrors.BadRequest(context, exception.Message, "Mod-settings request is invalid"); }
+    var request = JsonSerializer.Deserialize<ModSettingsUpdateRequest>(json.RootElement.GetRawText(), new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? throw new InvalidOperationException("The mod-settings request is empty.");
+    if (!request.ConfirmStopped) return ApiErrors.BadRequest(context, "Explicit stopped-server confirmation is required.");
+    if (supervisor.IsRunning) return ApiErrors.Conflict(context, "Stop the server before changing mod settings.");
+    var settings = await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings();
+    try
+    {
+        var document = new ModSettingsDocument(request.Artifact, (await service.DiscoverAsync(settings, context.RequestAborted)).Definitions, []);
+        await service.SaveAsync(document, settings, context.RequestAborted);
+        await service.MaterializeFactorioInputAsync(document, context.RequestAborted);
+        return Results.Ok(document);
+    }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message, "Mod-settings update failed"); }
+}).AddEndpointFilter(CsrfFilter.Validate);
 api.MapGet("/map-controls/catalog", async (MapControlCatalogService catalogs, StateStore state, HttpContext context) =>
 {
     try { return Results.Ok(await catalogs.ResolveForSettingsAsync(await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings(), context.RequestAborted)); }
@@ -352,6 +390,7 @@ api.MapPost("/maintenance/run/{operation}", async (string operation, Maintenance
 });
 
 api.MapGet("/saves", (DataPaths paths) => Results.Ok(Directory.EnumerateFiles(paths.Saves, "*.zip").Select(Path.GetFileName).Order()));
+NativeMapRoutes.Map(app);
 api.MapPost("/saves/create", async (SaveCreateRequest request, ServerSupervisor supervisor, HttpContext context) =>
 {
     try { return Results.Ok(new { name = await supervisor.CreateSaveAsync(request.Name, context.RequestAborted) }); }
@@ -563,33 +602,6 @@ static async Task<IResult> SignInAsync(HttpContext context, AccountService accou
     var identity = new ClaimsIdentity([new Claim(ClaimTypes.Name, user.Username), new Claim("uid", user.Id), new Claim("role", user.Role.ToString().ToLowerInvariant()), new Claim("security_stamp", user.SecurityStamp), new Claim("csrf", csrf)], CookieAuthenticationDefaults.AuthenticationScheme);
     await context.SignInAsync(new ClaimsPrincipal(identity));
     return Results.Ok(new { csrfToken = csrf });
-}
-
-static async ValueTask<object?> AuditAndAuthorizeMutationAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
-{
-    var request = context.HttpContext.Request;
-    if (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method)) return await next(context);
-    var audit = context.HttpContext.RequestServices.GetRequiredService<AuditService>();
-    var actor = context.HttpContext.User.FindFirstValue("uid");
-    var action = $"{request.Method} {request.Path.Value}";
-    if (!context.HttpContext.User.HasClaim("role", "admin") && !context.HttpContext.User.HasClaim("role", "owner"))
-    {
-        await audit.WriteAsync(action, "endpoint", null, "denied", actor, context.HttpContext.RequestAborted);
-        return ApiErrors.Forbidden(context.HttpContext);
-    }
-    try
-    {
-        var result = await next(context);
-        var status = (result as Microsoft.AspNetCore.Http.IStatusCodeHttpResult)?.StatusCode;
-        var outcome = status is 401 or 403 ? "denied" : status is >= 400 ? "failure" : "success";
-        await audit.WriteAsync(action, "endpoint", null, outcome, actor, context.HttpContext.RequestAborted);
-        return result;
-    }
-    catch
-    {
-        await audit.WriteAsync(action, "endpoint", null, "failure", actor, context.HttpContext.RequestAborted);
-        throw;
-    }
 }
 
 static async ValueTask<object?> OwnerAuthorizeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)

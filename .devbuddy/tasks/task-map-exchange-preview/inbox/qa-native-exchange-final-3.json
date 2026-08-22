@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "task_id": "map-exchange-preview",
+  "slice_id": "qa-native-exchange-final-3",
+  "attempt": 1,
+  "parent_revision": 14,
+  "role": "qa",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "status": "blocked",
+  "result": "Managed verification passed: 94 tests, Release build, frontend build, bounded cleanup, compatibility revalidation, and Docker preview determinism. Final acceptance remains blocked because runtime host validation accepts only minimal MZ/ELF magic instead of a valid host x64 PE/ELF header, and the Linux opt-in import/export test directly invokes the service rather than authenticated HTTP routes. Native environment variables are absent on this Windows host, so guarded native route execution was not run.",
+  "evidence": [
+    {"ref": "dotnet test FactorioServerManager.sln --configuration Release --no-restore; dotnet build FactorioServerManager.sln --configuration Release --no-restore", "outcome": "Passed 94/94 tests; Release build succeeded with 0 warnings/errors."},
+    {"ref": "src/FactorioManager.Web/package.json; bundled Node/Vite build", "outcome": "Frontend production build passed with only existing SignalR annotation warnings."},
+    {"ref": "src/FactorioManager.Api/NativeRuntime.cs; src/FactorioManager.Api/MapExchange.cs", "outcome": "Bounded cleanup, compatibility snapshots/revalidation, auth/stopped/ActiveSave/atomic gates, and service-level round-trip path are present."},
+    {"ref": "Docker read-only 2.0.77 fixture", "outcome": "Nauvis and Vulcanus deterministic PNG hashes were independently repeated successfully."},
+    {"ref": "src/FactorioManager.Api/NativeRuntime.cs; tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs", "outcome": "MZ and ELF magic-only validation can classify corrupt or wrong-architecture files as ready; valid x64 PE/ELF header parsing is still required."},
+    {"ref": "tests/FactorioManager.Api.Tests/NativeMapExchangeIntegrationTests.cs; src/FactorioManager.Api/Program.cs", "outcome": "Opt-in Linux import/export test exercises NativeMapExchangeService directly; it does not bind HTTP authentication/CSRF/audit routes. Route group configuration itself inherits those filters."}
+  ],
+  "next_slice": {
+    "summary": "Parse valid host x64 PE/ELF headers, add route-boundary coverage without external dependencies, then rerun final QA; native route execution remains opt-in on Linux.",
+    "read_paths": ["factorio-server-management:src/FactorioManager.Api/NativeRuntime.cs", "factorio-server-management:src/FactorioManager.Api/Program.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeMapExchangeIntegrationTests.cs"],
+    "read_keys": ["host x64 executable validation", "native HTTP route boundary", "native environment fixture"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": ["Minimal executable magic validation does not prove valid host x64 PE/ELF.", "Linux opt-in import/export test bypasses HTTP route binding; native environment variables are absent on Windows host."],
+  "required_approval": null
+}

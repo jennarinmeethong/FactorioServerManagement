@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task_id": "map-exchange-preview",
+  "slice_id": "developer-native-exchange-final-hardening",
+  "attempt": 1,
+  "parent_revision": 13,
+  "role": "developer",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "status": "completed",
+  "result": "Bounded post-kill process/server cleanup and deterministic cleanup failure handling; added host ELF/PE readiness validation; export/preview now snapshot and revalidate live version, expansion, archive hashes, catalog, and input fingerprint. Added compatibility-change and Linux opt-in service round-trip coverage. Full tests/build pass; native round-trip is opt-in because this Windows host cannot Process.Start the Linux fixture directly.",
+  "evidence": [
+    {"ref": "src/FactorioManager.Api/NativeRuntime.cs", "outcome": "Bounded cleanup, failure path, and host executable-header validation implemented."},
+    {"ref": "src/FactorioManager.Api/MapExchange.cs", "outcome": "Export/preview compatibility snapshot and revalidation added; RCON cleanup bounded."},
+    {"ref": "tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs", "outcome": "ELF/PE and cleanup-timeout failure tests added."},
+    {"ref": "tests/FactorioManager.Api.Tests/NativeMapExchangeServiceTests.cs", "outcome": "Preview compatibility mutation rejection test added."},
+    {"ref": "tests/FactorioManager.Api.Tests/NativeMapExchangeIntegrationTests.cs", "outcome": "Linux opt-in export/import round-trip verifies source hash and ActiveSave invariance when explicit runtime variables are configured."},
+    {"ref": "dotnet test tests/FactorioManager.Api.Tests/FactorioManager.Api.Tests.csproj --no-restore", "outcome": "Passed 94 tests, 0 failed; independently re-run pending final QA."},
+    {"ref": "dotnet build FactorioServerManager.sln --no-restore", "outcome": "Succeeded with 0 warnings and 0 errors."}
+  ],
+  "next_slice": {
+    "summary": "Run final independent QA; execute Linux opt-in native route/import/export round-trip when explicit runtime variables are available, otherwise verify the guarded path and Docker preview evidence.",
+    "read_paths": ["factorio-server-management:src/FactorioManager.Api/NativeRuntime.cs", "factorio-server-management:src/FactorioManager.Api/MapExchange.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeMapExchangeIntegrationTests.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs"],
+    "read_keys": ["bounded native cleanup", "host executable compatibility", "post-job compatibility fingerprint", "Linux route/import-export round trip"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

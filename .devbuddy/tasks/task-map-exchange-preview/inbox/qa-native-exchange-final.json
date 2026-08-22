@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task_id": "map-exchange-preview",
+  "slice_id": "qa-native-exchange-final",
+  "attempt": 1,
+  "parent_revision": 10,
+  "role": "qa",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "status": "blocked",
+  "result": "High-risk QA failed. Shared auth/CSRF/audit/admin-or-owner and stopped-state gates are inherited, and native helpers/isolation/source hashing are present. Three concrete defects remain: RCON server stdout/stderr are redirected but not drained; preview silently normalizes away unknown controls and discards PNG SHA-256 evidence; SafeSaveName accepts control characters on Linux. Native import/export routes lack service/HTTP round-trip coverage on this Windows host because the fixture is Linux ELF; current integration coverage only invokes preview CLI. Backend tests/build pass and Docker preview CLI checks pass.",
+  "evidence": [
+    {"ref": "src/FactorioManager.Api/Program.cs:234,400-416; src/FactorioManager.Api/Security.cs", "outcome": "Endpoints inherit authorization, CSRF, mutation audit, and admin/owner enforcement; service checks stopped state and explicit confirmation."},
+    {"ref": "src/FactorioManager.Api/MapExchange.cs:27-52,112-147", "outcome": "Import uses helpers.parse_map_exchange_string; export uses game.get_map_exchange_string and re-hashes source save."},
+    {"ref": "src/FactorioManager.Api/MapExchange.cs:149-164", "outcome": "RCON process redirects stdout/stderr without draining either stream, risking startup deadlock."},
+    {"ref": "src/FactorioManager.Api/MapControlCatalog.cs:73-84; src/FactorioManager.Api/MapExchange.cs:94-104; src/FactorioManager.Api/Domain.cs:130", "outcome": "Preview normalization can silently remove unknown controls and MapPreviewResult exposes no deterministic PNG hash."},
+    {"ref": "src/FactorioManager.Api/MapExchange.cs:224", "outcome": "SafeSaveName does not reject control characters."},
+    {"ref": "tests/FactorioManager.Api.Tests/NativeMapExchangeIntegrationTests.cs; tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs", "outcome": "Coverage validates preview CLI/isolation/PNG helper/runner cleanup but lacks NativeMapExchangeService or HTTP route import/export tests."},
+    {"ref": "dotnet test FactorioServerManager.sln --no-restore; Docker fixture job", "outcome": "76/76 backend tests pass; build passes; native 2.0.77 runtime generates valid Nauvis/Vulcanus previews in isolated container temp paths."}
+  ],
+  "next_slice": {
+    "summary": "Repair RCON process draining/timeout handling, reject unknown preview controls and unsafe names, return PNG hash evidence, and add service/route/native round-trip coverage where the Linux fixture can run.",
+    "read_paths": ["factorio-server-management:src/FactorioManager.Api/MapExchange.cs", "factorio-server-management:src/FactorioManager.Api/NativeRuntime.cs", "factorio-server-management:src/FactorioManager.Api/MapControlCatalog.cs", "factorio-server-management:src/FactorioManager.Api/Domain.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeMapExchangeIntegrationTests.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs"],
+    "read_keys": ["native-rcon-output-drain", "preview-evidence-hash", "unknown-control-fail-closed", "safe-save-name", "native-route-roundtrip"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": ["RCON stdout/stderr can deadlock startup; preview discards hash and drops unknown controls; unsafe control-character save names are accepted; native import/export route round-trip coverage is missing."],
+  "required_approval": null
+}

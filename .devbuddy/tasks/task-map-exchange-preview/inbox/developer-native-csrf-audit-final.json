@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "task_id": "map-exchange-preview",
+  "slice_id": "developer-native-csrf-audit-final",
+  "attempt": 1,
+  "parent_revision": 17,
+  "role": "developer",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "status": "completed",
+  "result": "Reordered native route filters so mutation authorization/auditing wraps CSRF validation. Added a mapped-endpoint regression proving a CSRF-denied native POST returns 403 and writes a denied audit event.",
+  "evidence": [
+    {"ref": "src/FactorioManager.Api/NativeMapRoutes.cs", "outcome": "ApiMutationAuthorizationFilter is registered before CsrfFilter for native API routes."},
+    {"ref": "tests/FactorioManager.Api.Tests/NativeMapRouteContractTests.cs", "outcome": "Regression invokes the mapped import POST endpoint and asserts 403 plus denied audit event."},
+    {"ref": "dotnet build FactorioServerManager.sln --no-restore", "outcome": "Succeeded with 0 warnings and 0 errors."},
+    {"ref": "dotnet test FactorioServerManager.sln --no-build --no-restore", "outcome": "Passed: 101 tests, 0 failed."}
+  ],
+  "next_slice": {
+    "summary": "Run independent final QA and close the task if all acceptance checks pass.",
+    "read_paths": ["factorio-server-management:src/FactorioManager.Api/NativeMapRoutes.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeMapRouteContractTests.cs"],
+    "read_keys": ["native-route-filter-order", "csrf-denied-audit"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "task_id": "map-exchange-preview",
+  "slice_id": "developer-native-exchange-hardening",
+  "attempt": 1,
+  "parent_revision": 11,
+  "role": "developer",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "status": "completed",
+  "result": "Hardened native server stdout/stderr draining and async cleanup; preview now rejects unknown requested controls before normalization and returns PNG length/SHA-256 evidence; save names fail closed across Linux/Windows unsafe forms. Added focused service/native tests and opt-in repeated native preview hash coverage.",
+  "evidence": [
+    {"ref": "src/FactorioManager.Api/Domain.cs; src/FactorioManager.Api/MapExchange.cs", "outcome": "Added preview evidence length/SHA-256 and fail-closed control/name validation."},
+    {"ref": "src/FactorioManager.Api/NativeRuntime.cs; src/FactorioManager.Api/MapExchange.cs", "outcome": "Hardened native process output draining and asynchronous cleanup."},
+    {"ref": "tests/FactorioManager.Api.Tests/NativeMapExchangeServiceTests.cs; tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs", "outcome": "Added focused service/native safety and cleanup tests."},
+    {"ref": "tests/FactorioManager.Api.Tests/NativeMapExchangeIntegrationTests.cs", "outcome": "Added opt-in repeated native preview hash coverage."},
+    {"ref": "dotnet test tests/FactorioManager.Api.Tests/FactorioManager.Api.Tests.csproj --no-restore", "outcome": "Passed 89 tests, 0 failed; independently re-run pending final QA."},
+    {"ref": "dotnet test tests/FactorioManager.Api.Tests/FactorioManager.Api.Tests.csproj --filter FullyQualifiedName~Native --no-restore", "outcome": "Passed 18 native-focused tests, 0 failed."},
+    {"ref": "dotnet build src/FactorioManager.Api/FactorioManager.Api.csproj --no-restore; git diff --check", "outcome": "Build succeeded with 0 warnings/errors and no whitespace errors."}
+  ],
+  "next_slice": {
+    "summary": "Review hardened native preview contract and, on Linux with explicit runtime variables, execute opt-in integration tests; otherwise complete final QA with Docker fixture evidence.",
+    "read_paths": ["factorio-server-management:src/FactorioManager.Api/MapExchange.cs", "factorio-server-management:src/FactorioManager.Api/NativeRuntime.cs", "factorio-server-management:src/FactorioManager.Api/MapControlCatalog.cs", "factorio-server-management:src/FactorioManager.Api/Domain.cs", "factorio-server-management:src/FactorioManager.Api/Program.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeMapExchangeIntegrationTests.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/NativeRuntimeTests.cs", "factorio-server-management:tests/FactorioManager.Api.Tests/PersistenceTests.cs"],
+    "read_keys": ["NativeMapExchangeService", "MapPreviewResult", "SafeSaveName", "NativeProcessRunner", "NativePreviewEvidenceVerifier"]
+  },
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "blockers": [],
+  "required_approval": null
+}
