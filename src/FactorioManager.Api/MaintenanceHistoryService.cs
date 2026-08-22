@@ -54,7 +54,6 @@ public sealed class MaintenanceHistoryService(StateStore state)
         var value = string.IsNullOrWhiteSpace(message)
             ? (success ? "Completed successfully." : "Operation failed.")
             : message.Trim();
-        value = System.Text.RegularExpressions.Regex.Replace(value, "(?i)(password|token|authorization|secret)\\s*[:=]\\s*\\S+", "$1=[redacted]");
-        return value.Length <= 512 ? value : value[..512];
+        return SafeDiagnostics.Redact(value);
     }
 }

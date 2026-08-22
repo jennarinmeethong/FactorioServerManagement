@@ -139,7 +139,13 @@ public sealed class ServerSupervisor(
             var savePath = Path.Combine(paths.Saves, saveName);
             if (File.Exists(savePath)) throw new InvalidOperationException("A save with that name already exists.");
             await WriteExpansionModListAsync(settings, cancellationToken);
-            var info = new ProcessStartInfo(executable) { WorkingDirectory = Path.GetDirectoryName(executable)!, UseShellExecute = false, RedirectStandardError = true };
+            var info = new ProcessStartInfo(executable)
+            {
+                WorkingDirectory = Path.GetDirectoryName(executable)!,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
             info.ArgumentList.Add("--create");
             info.ArgumentList.Add(savePath);
             var mapSettingsPath = Path.Combine(paths.Config, "map-gen-settings.json");
@@ -150,9 +156,32 @@ public sealed class ServerSupervisor(
             await File.WriteAllTextAsync(runtimeMapSettingsPath, MapGenerationSettingsJson.SerializeMapSettings(settings.MapGeneration), cancellationToken);
             info.ArgumentList.Add("--map-settings");
             info.ArgumentList.Add(runtimeMapSettingsPath);
+            var started = Stopwatch.GetTimestamp();
+            logger.LogInformation("Save create started for {SaveName}", saveName);
             using var process = Process.Start(info) ?? throw new InvalidOperationException("Factorio could not create the new map.");
-            await process.WaitForExitAsync(cancellationToken);
-            if (process.ExitCode != 0) throw new InvalidOperationException($"Factorio could not create the save: {await process.StandardError.ReadToEndAsync(cancellationToken)}");
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromMinutes(2));
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token);
+                var stdout = await stdoutTask;
+                var stderr = await stderrTask;
+                var diagnostics = SafeDiagnostics.Redact(string.Join(Environment.NewLine, new[] { stderr, stdout }.Where(text => !string.IsNullOrWhiteSpace(text))));
+                logger.LogInformation("Save create exited for {SaveName}: code={ExitCode}, durationMs={DurationMs}, result={Result}", saveName, process.ExitCode, Stopwatch.GetElapsedTime(started).TotalMilliseconds, process.ExitCode == 0 ? "success" : "failure");
+                if (process.ExitCode != 0)
+                    throw new InvalidOperationException($"Factorio could not create the save (exit code {process.ExitCode}).{(string.IsNullOrWhiteSpace(diagnostics) ? " Check the server logs for details." : $" Details: {diagnostics}")}");
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+                logger.LogWarning("Save create timed out for {SaveName} after {DurationMs}ms", saveName, Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                throw new InvalidOperationException("Save creation timed out after 2 minutes. Check the server logs and try again.");
+            }
+            if (!File.Exists(savePath))
+                throw new InvalidOperationException("Factorio reported success, but the generated save file was not found. The active save was not changed.");
             await store.SetAsync("settings", settings with { ActiveSave = saveName }, cancellationToken);
             return saveName;
         }
@@ -161,7 +190,18 @@ public sealed class ServerSupervisor(
 
     public async Task<IReadOnlyList<string>> ReadLogsAsync(CancellationToken cancellationToken)
     {
-        await Task.CompletedTask;
+        var logPath = Path.Combine(paths.Logs, "factorio.log");
+        if (File.Exists(logPath))
+        {
+            var lines = (await File.ReadAllLinesAsync(logPath, cancellationToken)).TakeLast(500);
+            _recentLogs.Clear();
+            foreach (var line in lines)
+            {
+                var safe = SafeDiagnostics.Redact(line);
+                _recentLogs.Enqueue(safe);
+            }
+            while (_recentLogs.Count > 500) _recentLogs.TryDequeue(out _);
+        }
         return _recentLogs.ToArray();
     }
 
@@ -265,8 +305,9 @@ public sealed class ServerSupervisor(
     private async Task WriteLogAsync(string line)
     {
         // Secrets are never expected in Factorio output; this removes the two known credential labels defensively.
-        line = line.Replace("token=", "token=[redacted]", StringComparison.OrdinalIgnoreCase);
-        _recentLogs.Enqueue($"{DateTimeOffset.UtcNow:O} {line}");
+        line = SafeDiagnostics.Redact(line);
+        var timestamped = $"{DateTimeOffset.UtcNow:O} {line}";
+        _recentLogs.Enqueue(timestamped);
         while (_recentLogs.Count > 500) _recentLogs.TryDequeue(out _);
         var logPath = Path.Combine(paths.Logs, "factorio.log");
         if (File.Exists(logPath) && new FileInfo(logPath).Length > 10 * 1024 * 1024)
@@ -275,7 +316,7 @@ public sealed class ServerSupervisor(
             File.Move(logPath, archivePath, overwrite: true);
         }
         await File.AppendAllTextAsync(logPath, $"{DateTimeOffset.UtcNow:O} {line}{Environment.NewLine}");
-        await hub.Clients.All.SendAsync("log", line);
+        await hub.Clients.All.SendAsync("log", timestamped);
     }
 
     private async Task SetStatusAsync(ServerStatus status)

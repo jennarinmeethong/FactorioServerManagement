@@ -87,7 +87,38 @@ await app.Services.GetRequiredService<AccountService>().EnsureInitialOwnerAsync(
 await app.Services.GetRequiredService<ModService>().InitializeAsync(app.Lifetime.ApplicationStopping);
 var setup = app.Services.GetRequiredService<SetupCodeService>();
 if (!await setup.IsConfiguredAsync(app.Lifetime.ApplicationStopping))
-    app.Logger.LogWarning("Factorio Manager first-run setup code: {SetupCode}", setup.Code);
+    app.Logger.LogWarning("Factorio Manager first-run setup is pending; use the configured setup-code channel to complete setup.");
+
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Request-Id"] = context.TraceIdentifier;
+    try
+    {
+        await next(context);
+    }
+    catch (Exception exception)
+    {
+        app.Logger.LogError("Unhandled request failure {RequestId}: {Error}", context.TraceIdentifier, SafeDiagnostics.Redact(exception.ToString()));
+        if (!context.Response.HasStarted)
+        {
+            context.Response.Clear();
+            await ApiErrors.Create(context, StatusCodes.Status500InternalServerError, "The server could not complete this request. Try again and provide the request id to an administrator.", "Unexpected server error").ExecuteAsync(context);
+        }
+    }
+});
+app.UseStatusCodePages(async statusContext =>
+{
+    var response = statusContext.HttpContext.Response;
+    if (response.StatusCode >= 400 && !response.HasStarted && string.IsNullOrWhiteSpace(response.ContentType))
+        await ApiErrors.Create(statusContext.HttpContext, response.StatusCode, response.StatusCode switch
+        {
+            401 => "Sign in is required.",
+            403 => "You do not have permission to perform this action.",
+            404 => "The requested resource was not found.",
+            429 => "Too many requests. Wait a moment and try again.",
+            _ => "The request could not be completed."
+        }).ExecuteAsync(statusContext.HttpContext);
+});
 
 app.UseRateLimiter();
 app.UseAuthentication();
@@ -106,18 +137,18 @@ auth.MapPost("/setup", async (SetupRequest request, HttpContext context, SetupCo
     var hasFactorioUsername = !string.IsNullOrWhiteSpace(factorioUsername);
     var hasFactorioToken = !string.IsNullOrWhiteSpace(factorioToken);
     if (hasFactorioUsername != hasFactorioToken)
-        return Results.BadRequest(new { error = "Enter both the Factorio username and token, or leave both empty." });
+        return ApiErrors.BadRequest(context, "Enter both the Factorio username and token, or leave both empty.");
     if (factorioUsername?.Length > 256 || factorioToken?.Length > 512)
-        return Results.BadRequest(new { error = "The Factorio username or token is too long." });
+        return ApiErrors.BadRequest(context, "The Factorio username or token is too long.");
     if (!await service.TryConfigureAsync(request.Code, request.Password, context.RequestAborted))
-        return Results.BadRequest(new { error = "Setup is unavailable, the code is invalid, or the password is too short." });
+        return ApiErrors.BadRequest(context, "Setup is unavailable, the code is invalid, or the password is too short.", "Setup failed");
     await secrets.WriteAsync(new SecretSettings(factorioUsername, factorioToken), context.RequestAborted);
     await accounts.EnsureInitialOwnerAsync(context.RequestAborted); await audit.WriteAsync("setup","user",null,"success",null,context.RequestAborted); return await SignInAsync(context, accounts, "admin");
 }).RequireRateLimiting("login");
 auth.MapPost("/login", async (LoginRequest request, HttpContext context, SetupCodeService service, AccountService accounts, AuditService audit) =>
 {
     var verified = await accounts.VerifyAsync(string.IsNullOrWhiteSpace(request.Username) ? "admin" : request.Username, request.Password, context.RequestAborted);
-    if (verified is null) { await audit.WriteAsync("login","user",null,"failure",null,context.RequestAborted); return Results.Unauthorized(); }
+    if (verified is null) { await audit.WriteAsync("login","user",null,"failure",null,context.RequestAborted); return ApiErrors.Unauthorized(context, "The username or password is incorrect."); }
     await audit.WriteAsync("login","user",verified.Value.User.Id,"success",verified.Value.User.Id,context.RequestAborted); return await SignInAsync(context, accounts, verified.Value.User.Username);
 }).RequireRateLimiting("login");
 auth.MapPost("/logout", async (HttpContext context) =>
@@ -132,26 +163,26 @@ auth.MapPost("/password", async (ChangePasswordRequest request, SetupCodeService
     var username = context.User.Identity?.Name;
     var verified = uid is not null && username is not null && (await accounts.VerifyAsync(username, request.CurrentPassword, context.RequestAborted)) is not null;
     if (!verified || request.NewPassword.Length < 8 || uid is null || !await accounts.ChangePasswordAsync(uid, request.NewPassword, context.RequestAborted))
-        return Results.BadRequest(new { error = "Current password is incorrect or the new password is shorter than 8 characters." });
+        return ApiErrors.BadRequest(context, "Current password is incorrect or the new password is shorter than 8 characters.");
     await audit.WriteAsync("password_change","user",uid,"success",uid,context.RequestAborted); return Results.NoContent();
 }).RequireAuthorization().AddEndpointFilter(CsrfFilter.Validate);
 
 var owner = app.MapGroup("/api").RequireAuthorization().AddEndpointFilter((EndpointFilterInvocationContext context, EndpointFilterDelegate next) => OwnerAuthorizeAsync(context, next));
 owner.MapGet("/users", async (AccountService a, CancellationToken ct) => Results.Ok(await a.ListAsync(ct)));
-owner.MapPost("/users", async (CreateUserRequest r, AccountService a, AuditService audit, HttpContext c) => { try { var u=await a.CreateAsync(r.Username,r.Password,r.Role,c.RequestAborted); await audit.WriteAsync("user_create","user",u.Id,"success",c.User.FindFirstValue("uid"),c.RequestAborted); return (IResult)Results.Ok(u); } catch { return (IResult)Results.BadRequest(); } }).AddEndpointFilter(CsrfFilter.Validate);
-owner.MapPatch("/users/{id}/role", async (string id, ChangeRoleRequest r, AccountService a, AuditService audit, HttpContext c) => { var ok=await a.UpdateRoleAsync(id,r.Role,c.RequestAborted); await audit.WriteAsync("role_change","user",id,ok?"success":"failure",c.User.FindFirstValue("uid"),c.RequestAborted); return (IResult)(ok?Results.NoContent():Results.BadRequest()); }).AddEndpointFilter(CsrfFilter.Validate);
-owner.MapPost("/users/{id}/password", async (string id, UserPasswordRequest r, AccountService a, AuditService audit, HttpContext c) => { var ok=await a.ChangePasswordAsync(id,r.Password,c.RequestAborted); await audit.WriteAsync("password_change","user",id,ok?"success":"failure",c.User.FindFirstValue("uid"),c.RequestAborted); return (IResult)(ok?Results.NoContent():Results.BadRequest()); }).AddEndpointFilter(CsrfFilter.Validate);
-owner.MapDelete("/users/{id}", async (string id, AccountService a, AuditService audit, HttpContext c) => { if(id==c.User.FindFirstValue("uid")) return (IResult)Results.BadRequest(); var ok=await a.DeleteAsync(id,c.RequestAborted); await audit.WriteAsync("user_delete","user",id,ok?"success":"failure",c.User.FindFirstValue("uid"),c.RequestAborted); return (IResult)(ok?Results.NoContent():Results.BadRequest()); }).AddEndpointFilter(CsrfFilter.Validate);
+owner.MapPost("/users", async (CreateUserRequest r, AccountService a, AuditService audit, HttpContext c) => { try { var u=await a.CreateAsync(r.Username,r.Password,r.Role,c.RequestAborted); await audit.WriteAsync("user_create","user",u.Id,"success",c.User.FindFirstValue("uid"),c.RequestAborted); return (IResult)Results.Ok(u); } catch (InvalidOperationException e) { return ApiErrors.BadRequest(c, e.Message, "User creation failed"); } }).AddEndpointFilter(CsrfFilter.Validate);
+owner.MapPatch("/users/{id}/role", async (string id, ChangeRoleRequest r, AccountService a, AuditService audit, HttpContext c) => { var ok=await a.UpdateRoleAsync(id,r.Role,c.RequestAborted); await audit.WriteAsync("role_change","user",id,ok?"success":"failure",c.User.FindFirstValue("uid"),c.RequestAborted); return (IResult)(ok?Results.NoContent():ApiErrors.NotFound(c, "The user was not found.")); }).AddEndpointFilter(CsrfFilter.Validate);
+owner.MapPost("/users/{id}/password", async (string id, UserPasswordRequest r, AccountService a, AuditService audit, HttpContext c) => { var ok=await a.ChangePasswordAsync(id,r.Password,c.RequestAborted); await audit.WriteAsync("password_change","user",id,ok?"success":"failure",c.User.FindFirstValue("uid"),c.RequestAborted); return (IResult)(ok?Results.NoContent():ApiErrors.NotFound(c, "The user was not found.")); }).AddEndpointFilter(CsrfFilter.Validate);
+owner.MapDelete("/users/{id}", async (string id, AccountService a, AuditService audit, HttpContext c) => { if(id==c.User.FindFirstValue("uid")) return (IResult)ApiErrors.BadRequest(c, "You cannot delete your own account."); var ok=await a.DeleteAsync(id,c.RequestAborted); await audit.WriteAsync("user_delete","user",id,ok?"success":"failure",c.User.FindFirstValue("uid"),c.RequestAborted); return (IResult)(ok?Results.NoContent():ApiErrors.NotFound(c, "The user was not found.")); }).AddEndpointFilter(CsrfFilter.Validate);
 owner.MapGet("/audit-events", async (long? beforeId, int? limit, AuditService a, CancellationToken ct) => Results.Ok(await a.ListAsync(beforeId,limit??50,ct)));
 owner.MapGet("/notification-settings", async (NotificationService notifications, CancellationToken ct) => Results.Ok(await notifications.GetStatusAsync(ct)));
 owner.MapPut("/notification-settings", async (NotificationSettingsRequest request, StateStore state, SecretStore secrets, HttpContext context) =>
 {
     if (request.DiscordWebhookUrl?.Length > 2048 || request.TelegramBotToken?.Length > 512 || request.TelegramChatId?.Length > 256)
-        return Results.BadRequest(new { error = "Notification settings are too long." });
+        return ApiErrors.BadRequest(context, "Notification settings are too long.");
     if (!string.IsNullOrWhiteSpace(request.DiscordWebhookUrl) &&
         (!Uri.TryCreate(request.DiscordWebhookUrl, UriKind.Absolute, out var webhook) ||
          (webhook.Scheme is not ("http" or "https"))))
-        return Results.BadRequest(new { error = "Discord webhook URL must be an absolute HTTP or HTTPS URL." });
+        return ApiErrors.BadRequest(context, "Discord webhook URL must be an absolute HTTP or HTTPS URL.");
     // Empty fields are intentionally treated as "keep the current secret".
     // This lets the UI avoid echoing credentials while still allowing an
     // explicit clear through a separate, future operation.
@@ -180,7 +211,7 @@ owner.MapPost("/config/import", async (ConfigurationImportRequest request, State
     if (request.Confirm && !supervisor.IsRunning && bundle.SchemaVersion == 1 && bundle.Settings is not null && bundle.Mods is not null && bundle.ModProfiles is not null)
     {
         var errors = ServerSettingsValidator.Validate(bundle.Settings);
-        if (errors.Count > 0) return Results.ValidationProblem(errors);
+        if (errors.Count > 0) return ApiErrors.Validation(context, errors);
         var current = await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings();
         var importedSettings = bundle.Settings with { ServerPassword = bundle.Settings.ServerPassword ?? current.ServerPassword };
         await state.SetManyAsync(new Dictionary<string, object?>
@@ -191,7 +222,7 @@ owner.MapPost("/config/import", async (ConfigurationImportRequest request, State
         }, context.RequestAborted);
         return Results.NoContent();
     }
-    return Results.BadRequest(new { error = "Stop the server and provide a supported configuration bundle." });
+    return ApiErrors.BadRequest(context, "Stop the server and provide a supported configuration bundle.");
 }).AddEndpointFilter(CsrfFilter.Validate);
 
 var api = app.MapGroup("/api").RequireAuthorization().AddEndpointFilter(CsrfFilter.Validate);
@@ -214,14 +245,14 @@ api.MapPut("/factorio-credentials", async (FactorioCredentialsRequest request, S
     var username = string.IsNullOrWhiteSpace(request.Username) ? current.FactorioUsername : request.Username.Trim();
     var token = string.IsNullOrWhiteSpace(request.Token) ? current.FactorioToken : request.Token.Trim();
     if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(token) || username.Length > 256 || token.Length > 512)
-        return Results.BadRequest(new { error = "Enter both the Factorio username and token." });
+        return ApiErrors.BadRequest(context, "Enter both the Factorio username and token.");
     await secrets.WriteAsync(new SecretSettings(username, token), context.RequestAborted);
     return Results.NoContent();
 });
 api.MapPut("/settings", async (ServerSettings settings, StateStore state, ServerSupervisor supervisor, HttpContext context) =>
 {
     if (supervisor.IsRunning)
-        return Results.Conflict(new { error = "Stop the server before changing settings." });
+        return ApiErrors.Conflict(context, "Stop the server before changing settings.");
     var submittedProfiles = settings.MapGenerationProfiles ?? new Dictionary<string, MapGenerationSettings>(StringComparer.OrdinalIgnoreCase);
     var profiles = submittedProfiles.Count > 0
         ? new Dictionary<string, MapGenerationSettings>(submittedProfiles, StringComparer.OrdinalIgnoreCase)
@@ -231,7 +262,7 @@ api.MapPut("/settings", async (ServerSettings settings, StateStore state, Server
     var normalized = settings with { MapGenerationProfiles = profiles };
     var validationErrors = ServerSettingsValidator.Validate(normalized);
     if (validationErrors.Count > 0)
-        return Results.ValidationProblem(validationErrors);
+        return ApiErrors.Validation(context, validationErrors);
     var activeMap = profiles[normalized.Expansion];
     normalized = normalized with { MapGeneration = activeMap };
     await state.SetAsync("settings", normalized, context.RequestAborted);
@@ -246,16 +277,25 @@ api.MapPost("/control/{action}", async (string action, ServerSupervisor supervis
             "start" => Results.Ok(await supervisor.StartAsync(context.RequestAborted)),
             "stop" => Results.Ok(await supervisor.StopAsync(context.RequestAborted)),
             "restart" => Results.Ok(await supervisor.RestartAsync(context.RequestAborted)),
-            _ => Results.NotFound()
+            _ => ApiErrors.NotFound(context, $"Unknown control action '{action}'.")
         };
     }
-    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.Create(context, StatusCodes.Status400BadRequest, exception.Message); }
 });
-api.MapGet("/logs", async (ServerSupervisor supervisor, HttpContext context) => Results.Ok(await supervisor.ReadLogsAsync(context.RequestAborted)));
-api.MapGet("/logs/download", (DataPaths paths) =>
-    File.Exists(Path.Combine(paths.Logs, "factorio.log"))
-        ? Results.File(Path.Combine(paths.Logs, "factorio.log"), "text/plain", "factorio.log")
-        : Results.NotFound(new { error = "No log file is available yet." }));
+api.MapGet("/logs", async (string? search, ServerSupervisor supervisor, HttpContext context) =>
+{
+    var logs = await supervisor.ReadLogsAsync(context.RequestAborted);
+    if (!string.IsNullOrWhiteSpace(search)) logs = logs.Where(line => line.Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
+    return Results.Ok(logs);
+});
+api.MapGet("/logs/download", async (DataPaths paths, HttpContext context) =>
+{
+    var logPath = Path.Combine(paths.Logs, "factorio.log");
+    if (!File.Exists(logPath)) return ApiErrors.Create(context, StatusCodes.Status404NotFound, "No log file is available yet.");
+    context.Response.Headers.ContentDisposition = "attachment; filename=\"factorio.log\"";
+    var content = SafeDiagnostics.Redact(await File.ReadAllTextAsync(logPath, context.RequestAborted));
+    return Results.Text(content, "text/plain");
+});
 api.MapGet("/system-health", async (SystemHealthService health, HealthHistoryService history, CancellationToken ct) =>
 {
     var snapshot = health.GetSnapshot();
@@ -268,8 +308,8 @@ api.MapGet("/server-history", async (ServerEventHistoryService history, HttpCont
 api.MapPost("/maintenance/run/{operation}", async (string operation, MaintenanceRunRequest request, BackupService backups, VersionService versions, ServerSupervisor supervisor, MaintenanceHistoryService history, NotificationService notifications, HttpContext context) =>
 {
     if (!context.User.HasClaim("role", "owner") && !context.User.HasClaim("role", "admin"))
-        return Results.StatusCode(StatusCodes.Status403Forbidden);
-    if (!request.Confirm) return Results.BadRequest(new { error = "Explicit maintenance confirmation is required." });
+        return ApiErrors.Forbidden(context);
+    if (!request.Confirm) return ApiErrors.BadRequest(context, "Explicit maintenance confirmation is required.");
     var started = DateTimeOffset.UtcNow;
     try
     {
@@ -285,7 +325,7 @@ api.MapPost("/maintenance/run/{operation}", async (string operation, Maintenance
                 await supervisor.RestartAsync(context.RequestAborted);
                 break;
             default:
-                return Results.NotFound();
+                return ApiErrors.NotFound(context, $"Unknown maintenance operation '{operation}'.");
         }
         await history.RecordAsync($"manual-{operation}", true, started, DateTimeOffset.UtcNow, "Maintenance operation completed.", context.RequestAborted);
         return Results.NoContent();
@@ -294,7 +334,7 @@ api.MapPost("/maintenance/run/{operation}", async (string operation, Maintenance
     {
         await history.RecordAsync($"manual-{operation}", false, started, DateTimeOffset.UtcNow, exception.Message, context.RequestAborted);
         await notifications.SendAsync($"Factorio maintenance failed ({operation})", exception.Message, context.RequestAborted);
-        return Results.BadRequest(new { error = exception.Message });
+        return ApiErrors.BadRequest(context, exception.Message, "Maintenance failed");
     }
 });
 
@@ -302,13 +342,13 @@ api.MapGet("/saves", (DataPaths paths) => Results.Ok(Directory.EnumerateFiles(pa
 api.MapPost("/saves/create", async (SaveCreateRequest request, ServerSupervisor supervisor, HttpContext context) =>
 {
     try { return Results.Ok(new { name = await supervisor.CreateSaveAsync(request.Name, context.RequestAborted) }); }
-    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.Create(context, StatusCodes.Status400BadRequest, exception.Message, "Save creation failed"); }
 });
 api.MapPost("/saves/select/{saveName}", async (string saveName, StateStore state, DataPaths paths, ServerSupervisor supervisor, HttpContext context) =>
 {
-    if (supervisor.IsRunning) return Results.Conflict(new { error = "Stop the server before switching saves." });
+    if (supervisor.IsRunning) return ApiErrors.Conflict(context, "Stop the server before switching saves.");
     var safe = Path.GetFileName(saveName);
-    if (!string.Equals(safe, saveName, StringComparison.Ordinal) || !File.Exists(Path.Combine(paths.Saves, safe))) return Results.NotFound();
+    if (!string.Equals(safe, saveName, StringComparison.Ordinal) || !File.Exists(Path.Combine(paths.Saves, safe))) return ApiErrors.NotFound(context, $"Save '{safe}' was not found.");
     var settings = await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings();
     settings = settings with { ActiveSave = safe };
     await state.SetAsync("settings", settings, context.RequestAborted);
@@ -316,14 +356,14 @@ api.MapPost("/saves/select/{saveName}", async (string saveName, StateStore state
 });
 api.MapPost("/saves/upload", async (IFormFile file, DataPaths paths, ServerSupervisor supervisor, HttpContext context) =>
 {
-    if (supervisor.IsRunning) return Results.Conflict(new { error = "Stop the server before uploading a save." });
+    if (supervisor.IsRunning) return ApiErrors.Conflict(context, "Stop the server before uploading a save.");
     var safe = Path.GetFileName(file.FileName);
     if (string.IsNullOrWhiteSpace(safe) || !string.Equals(safe, file.FileName, StringComparison.Ordinal) || !safe.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-        return Results.BadRequest(new { error = "Upload a Factorio save as a file named with the .zip extension." });
+        return ApiErrors.BadRequest(context, "Upload a Factorio save as a file named with the .zip extension.", "Save upload failed");
     if (file.Length == 0 || file.Length > 1024L * 1024 * 1024)
-        return Results.BadRequest(new { error = "The save upload must be non-empty and no larger than 1 GB." });
+        return ApiErrors.BadRequest(context, "The save upload must be non-empty and no larger than 1 GB.", "Save upload failed");
     var destination = Path.Combine(paths.Saves, safe);
-    if (File.Exists(destination)) return Results.Conflict(new { error = $"A save named '{safe}' already exists. Choose a different name." });
+    if (File.Exists(destination)) return ApiErrors.Conflict(context, $"A save named '{safe}' already exists. Choose a different name.");
     var temporary = destination + ".upload-" + Guid.NewGuid().ToString("N") + ".tmp";
     try
     {
@@ -332,11 +372,11 @@ api.MapPost("/saves/upload", async (IFormFile file, DataPaths paths, ServerSuper
         try
         {
             using var archive = ZipFile.OpenRead(temporary);
-            if (archive.Entries.Count == 0) return Results.BadRequest(new { error = "The uploaded zip archive is empty." });
+            if (archive.Entries.Count == 0) return ApiErrors.BadRequest(context, "The uploaded zip archive is empty.", "Save upload failed");
         }
-        catch (InvalidDataException) { return Results.BadRequest(new { error = "The uploaded file is not a valid zip archive." }); }
+        catch (InvalidDataException) { return ApiErrors.BadRequest(context, "The uploaded file is not a valid zip archive.", "Save upload failed"); }
         try { File.Move(temporary, destination); }
-        catch (IOException) when (File.Exists(destination)) { return Results.Conflict(new { error = $"A save named '{safe}' already exists. Choose a different name." }); }
+        catch (IOException) when (File.Exists(destination)) { return ApiErrors.Conflict(context, $"A save named '{safe}' already exists. Choose a different name."); }
         return Results.Created($"/api/saves/{Uri.EscapeDataString(safe)}", new { name = safe });
     }
     finally { if (File.Exists(temporary)) File.Delete(temporary); }
@@ -345,42 +385,42 @@ api.MapPost("/saves/backup", async (BackupService backups, HttpContext context) 
 {
     try { return Results.Ok(new { name = await backups.CreateBackupAsync("manual", context.RequestAborted) }); }
     catch (InvalidOperationException exception) when (exception.Message.Contains("Stop the server", StringComparison.OrdinalIgnoreCase))
-    { return Results.Conflict(new { error = exception.Message }); }
+    { return ApiErrors.Conflict(context, exception.Message); }
     catch (InvalidOperationException exception)
-    { return Results.BadRequest(new { error = exception.Message }); }
+    { return ApiErrors.BadRequest(context, exception.Message, "Backup failed"); }
 });
 api.MapGet("/backups", async (BackupService backups, CancellationToken ct) => Results.Ok(await backups.ListAsync(ct)));
 api.MapGet("/backups/{backupId}/download", async (string backupId, BackupService backups, HttpContext context) =>
 {
     try { var result = await backups.OpenReadAsync(backupId, context.RequestAborted); return Results.File(result!.Value.Content, "application/zip", result.Value.Metadata.FileName); }
-    catch (InvalidOperationException exception) { return Results.NotFound(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.NotFound(context, exception.Message); }
 });
 api.MapPost("/backups/{backupId}/restore", async (string backupId, BackupRestoreRequest request, BackupService backups, ServerSupervisor supervisor, HttpContext context) =>
 {
-    if (!context.User.HasClaim("role", "owner")) return Results.StatusCode(StatusCodes.Status403Forbidden);
-    if (supervisor.IsRunning) return Results.Conflict(new { error = "Stop the server before restoring a backup." });
-    if (!request.Confirm) return Results.BadRequest(new { error = "Explicit restore confirmation is required." });
+    if (!context.User.HasClaim("role", "owner")) return ApiErrors.Forbidden(context);
+    if (supervisor.IsRunning) return ApiErrors.Conflict(context, "Stop the server before restoring a backup.");
+    if (!request.Confirm) return ApiErrors.BadRequest(context, "Explicit restore confirmation is required.");
     try { await backups.RestoreAsync(backupId, true, context.RequestAborted); return Results.NoContent(); }
-    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message, "Backup restore failed"); }
 });
 api.MapPatch("/backups/{backupId}", async (string backupId, BackupRenameRequest request, BackupService backups, HttpContext context) =>
 {
-    if (!context.User.HasClaim("role", "owner")) return Results.StatusCode(StatusCodes.Status403Forbidden);
+    if (!context.User.HasClaim("role", "owner")) return ApiErrors.Forbidden(context);
     try { await backups.RenameAsync(backupId, request.Name, context.RequestAborted); return Results.NoContent(); }
-    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message, "Backup rename failed"); }
 });
 api.MapDelete("/backups/{backupId}", async (string backupId, BackupService backups, HttpContext context) =>
 {
-    if (!context.User.HasClaim("role", "owner")) return Results.StatusCode(StatusCodes.Status403Forbidden);
+    if (!context.User.HasClaim("role", "owner")) return ApiErrors.Forbidden(context);
     try { await backups.DeleteAsync(backupId, context.RequestAborted); return Results.NoContent(); }
-    catch (InvalidOperationException exception) { return Results.NotFound(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.NotFound(context, exception.Message); }
 });
 
 api.MapGet("/versions", (VersionService versions) => Results.Ok(versions.GetCachedVersions()));
 api.MapGet("/versions/catalog", async (VersionService versions, HttpContext context) =>
 {
     try { return (IResult)Results.Ok(await versions.GetCatalogAsync(context.RequestAborted)); }
-    catch (HttpRequestException exception) { return (IResult)Results.Json(new { error = exception.Message }, statusCode: StatusCodes.Status502BadGateway); }
+    catch (HttpRequestException exception) { return ApiErrors.BadGateway(context, exception.Message); }
 });
 api.MapGet("/updates", async (VersionService versions, HttpContext context) =>
 {
@@ -391,36 +431,36 @@ api.MapPost("/updates/check", async (VersionService versions, HttpContext contex
 api.MapPost("/versions/download/{channel}/{version}", async (string channel, string version, VersionService versions, HttpContext context) =>
 {
     try { return (IResult)Results.Ok(await versions.DownloadAsync(channel, version, context.RequestAborted)); }
-    catch (InvalidOperationException exception) { return (IResult)Results.BadRequest(new { error = exception.Message }); }
-    catch (HttpRequestException exception) { return (IResult)Results.Json(new { error = exception.Message }, statusCode: StatusCodes.Status502BadGateway); }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message, "Version download failed"); }
+    catch (HttpRequestException exception) { return ApiErrors.BadGateway(context, exception.Message); }
 });
 api.MapPost("/versions/apply", async (VersionApplyRequest request, VersionService versions, HttpContext context) =>
 {
     try { return Results.Ok(await versions.ApplyAsync(request, context.RequestAborted)); }
-    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message, "Version update failed"); }
 });
 
 api.MapGet("/mods", async (ModService mods, HttpContext context) => Results.Ok(await mods.ListAsync(context.RequestAborted)));
 api.MapGet("/mods/search", async (string query, ModService mods, HttpContext context) =>
 {
     try { return (IResult)Results.Ok(await mods.SearchAsync(query, context.RequestAborted)); }
-    catch (InvalidOperationException exception) { return (IResult)Results.BadRequest(new { error = exception.Message }); }
-    catch (HttpRequestException exception) { return (IResult)Results.Json(new { error = exception.Message }, statusCode: StatusCodes.Status502BadGateway); }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message, "Mod search failed"); }
+    catch (HttpRequestException exception) { return ApiErrors.BadGateway(context, exception.Message); }
 });
 api.MapGet("/mods/recovery", async (ModService mods, HttpContext context) => Results.Ok(await mods.GetRecoveryStatusAsync(context.RequestAborted)));
 api.MapPost("/mods/preflight", async (ModPreflightRequest request, ModService mods, HttpContext context) => Results.Ok(await mods.PreflightAsync(request, context.RequestAborted)));
 api.MapPost("/mods/install", async (ModInstallRequest request, ModService mods, HttpContext context) =>
 {
     try { return Results.Ok(await mods.InstallAsync(request, context.RequestAborted)); }
-    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message, "Mod operation failed"); }
 });
 api.MapPost("/mods/upload", async (HttpRequest request, ModService mods, HttpContext context) =>
 {
-    if (!request.HasFormContentType) return Results.BadRequest(new { error = "Upload the mod as multipart/form-data." });
+    if (!request.HasFormContentType) return ApiErrors.BadRequest(context, "Upload the mod as multipart/form-data.", "Mod upload failed");
     var form = await request.ReadFormAsync(context.RequestAborted);
     var file = form.Files.GetFile("file");
-    if (file is null) return Results.BadRequest(new { error = "Choose a mod .zip file." });
-    if (file.Length > 512L * 1024 * 1024) return Results.BadRequest(new { error = "The mod archive exceeds the 512 MB limit." });
+    if (file is null) return ApiErrors.BadRequest(context, "Choose a mod .zip file.", "Mod upload failed");
+    if (file.Length > 512L * 1024 * 1024) return ApiErrors.BadRequest(context, "The mod archive exceeds the 512 MB limit.", "Mod upload failed");
     var enabled = !bool.TryParse(form["enabled"], out var parsedEnabled) || parsedEnabled;
     var includeDependencies = !bool.TryParse(form["includeDependencies"], out var parsedDependencies) || parsedDependencies;
     try
@@ -428,39 +468,39 @@ api.MapPost("/mods/upload", async (HttpRequest request, ModService mods, HttpCon
         await using var stream = file.OpenReadStream();
         return Results.Ok(await mods.UploadAsync(stream, file.FileName, new ModUploadRequest(enabled, includeDependencies, true), context.RequestAborted));
     }
-    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message, "Mod upload failed"); }
 });
 api.MapGet("/mods/updates", async (ModService mods, HttpContext context) =>
 {
     try { return Results.Ok(await mods.CheckUpdatesAsync(context.RequestAborted)); }
-    catch (HttpRequestException exception) { return Results.BadRequest(new { error = $"Mod Portal update check failed: {exception.Message}" }); }
+    catch (HttpRequestException exception) { return ApiErrors.BadGateway(context, $"Mod Portal update check failed: {exception.Message}"); }
 });
 api.MapPost("/mods/{name}/update", async (string name, ModService mods, HttpContext context) =>
 {
     try { return Results.Ok(await mods.UpdateAsync(name, context.RequestAborted)); }
-    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
-    catch (HttpRequestException exception) { return Results.BadRequest(new { error = $"Mod Portal update failed: {exception.Message}" }); }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message, "Mod update failed"); }
+    catch (HttpRequestException exception) { return ApiErrors.BadGateway(context, $"Mod Portal update failed: {exception.Message}"); }
 });
 api.MapPost("/mods/{name}/enabled/{enabled:bool}", async (string name, bool enabled, ModService mods, HttpContext context) =>
 {
     try { return Results.Ok(await mods.SetEnabledAsync(name, enabled, context.RequestAborted)); }
-    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message, "Mod operation failed"); }
 });
 api.MapDelete("/mods/{name}", async (string name, bool? force, ModService mods, HttpContext context) =>
 {
-    if (force == true && !context.User.HasClaim("role", "owner")) return Results.StatusCode(StatusCodes.Status403Forbidden);
+    if (force == true && !context.User.HasClaim("role", "owner")) return ApiErrors.Forbidden(context);
     try { return Results.Ok(await mods.UninstallAsync(name, force == true, context.RequestAborted)); }
-    catch (InvalidOperationException exception) { return Results.Conflict(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.Conflict(context, exception.Message); }
 });
 api.MapPost("/mods/bulk-update", async (ModBulkUpdateRequest request, ModService mods, HttpContext context) =>
 {
-    if (!request.Confirm) return Results.BadRequest(new { error = "Explicit bulk update confirmation is required." });
+    if (!request.Confirm) return ApiErrors.BadRequest(context, "Explicit bulk update confirmation is required.");
     try { return Results.Ok(await mods.BulkUpdateAsync(request.Names ?? [], context.RequestAborted)); }
-    catch (InvalidOperationException exception) { return Results.BadRequest(new { error = exception.Message }); }
+    catch (InvalidOperationException exception) { return ApiErrors.BadRequest(context, exception.Message); }
 });
 api.MapGet("/mods/profiles", async (ModService mods, HttpContext context) => Results.Ok(await mods.ProfilesAsync(context.RequestAborted)));
-api.MapPost("/mods/profiles", async (ModProfileRequest request, ModService mods, HttpContext context) => { try { return Results.Ok(await mods.SaveProfileAsync(request, context.RequestAborted)); } catch (InvalidOperationException e) { return Results.BadRequest(new { error = e.Message }); } });
-api.MapPost("/mods/profiles/{name}/apply", async (string name, ModService mods, HttpContext context) => { try { return Results.Ok(await mods.ApplyProfileAsync(name, context.RequestAborted)); } catch (InvalidOperationException e) { return Results.BadRequest(new { error = e.Message }); } });
+api.MapPost("/mods/profiles", async (ModProfileRequest request, ModService mods, HttpContext context) => { try { return Results.Ok(await mods.SaveProfileAsync(request, context.RequestAborted)); } catch (InvalidOperationException e) { return ApiErrors.BadRequest(context, e.Message); } });
+api.MapPost("/mods/profiles/{name}/apply", async (string name, ModService mods, HttpContext context) => { try { return Results.Ok(await mods.ApplyProfileAsync(name, context.RequestAborted)); } catch (InvalidOperationException e) { return ApiErrors.BadRequest(context, e.Message); } });
 api.MapDelete("/mods/profiles/{name}", async (string name, ModService mods, HttpContext context) => Results.Ok(new { deleted = await mods.DeleteProfileAsync(name, context.RequestAborted) }));
 
 api.MapGet("/players/{kind}", async (string kind, PlayerListService players, HttpContext context) => Results.Ok(await players.ListAsync(kind, context.RequestAborted)));
@@ -470,33 +510,33 @@ api.MapDelete("/players/{kind}/{name}", async (string kind, string name, PlayerL
 api.MapGet("/live-players", async (LivePlayerService players, HttpContext context) =>
 {
     try { return Results.Ok(await players.ListAsync(context.RequestAborted)); }
-    catch (ServerNotRunningException e) { return Results.Conflict(new { error = e.Message }); }
-    catch (InvalidOperationException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
-    catch (TimeoutException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+    catch (ServerNotRunningException e) { return ApiErrors.Conflict(context, e.Message); }
+    catch (InvalidOperationException e) { return ApiErrors.ServiceUnavailable(context, e.Message); }
+    catch (TimeoutException e) { return ApiErrors.ServiceUnavailable(context, e.Message); }
 });
 api.MapPost("/live-chat", async (LiveChatRequest request, LivePlayerService players, HttpContext context) =>
 {
     try { await players.ChatAsync(request.Message, context.RequestAborted); return Results.NoContent(); }
-    catch (ArgumentException e) { return Results.BadRequest(new { error = e.Message }); }
-    catch (ServerNotRunningException e) { return Results.Conflict(new { error = e.Message }); }
-    catch (InvalidOperationException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
-    catch (TimeoutException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+    catch (ArgumentException e) { return ApiErrors.BadRequest(context, e.Message); }
+    catch (ServerNotRunningException e) { return ApiErrors.Conflict(context, e.Message); }
+    catch (InvalidOperationException e) { return ApiErrors.ServiceUnavailable(context, e.Message); }
+    catch (TimeoutException e) { return ApiErrors.ServiceUnavailable(context, e.Message); }
 }).RequireRateLimiting("live-control");
 api.MapPost("/live-players/kick", async (LivePlayerActionRequest request, LivePlayerService players, HttpContext context) =>
 {
     try { await players.KickAsync(request.PlayerName, context.RequestAborted); return Results.NoContent(); }
-    catch (ArgumentException e) { return Results.BadRequest(new { error = e.Message }); }
-    catch (ServerNotRunningException e) { return Results.Conflict(new { error = e.Message }); }
-    catch (InvalidOperationException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
-    catch (TimeoutException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+    catch (ArgumentException e) { return ApiErrors.BadRequest(context, e.Message); }
+    catch (ServerNotRunningException e) { return ApiErrors.Conflict(context, e.Message); }
+    catch (InvalidOperationException e) { return ApiErrors.ServiceUnavailable(context, e.Message); }
+    catch (TimeoutException e) { return ApiErrors.ServiceUnavailable(context, e.Message); }
 }).RequireRateLimiting("live-control");
 api.MapPost("/live-players/ban", async (LivePlayerActionRequest request, LivePlayerService players, HttpContext context) =>
 {
     try { await players.BanAsync(request.PlayerName, request.Reason, context.RequestAborted); return Results.NoContent(); }
-    catch (ArgumentException e) { return Results.BadRequest(new { error = e.Message }); }
-    catch (ServerNotRunningException e) { return Results.Conflict(new { error = e.Message }); }
-    catch (InvalidOperationException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
-    catch (TimeoutException) { return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+    catch (ArgumentException e) { return ApiErrors.BadRequest(context, e.Message); }
+    catch (ServerNotRunningException e) { return ApiErrors.Conflict(context, e.Message); }
+    catch (InvalidOperationException e) { return ApiErrors.ServiceUnavailable(context, e.Message); }
+    catch (TimeoutException e) { return ApiErrors.ServiceUnavailable(context, e.Message); }
 }).RequireRateLimiting("live-control");
 
 app.MapHub<StatusHub>("/hubs/status").RequireAuthorization();
@@ -522,7 +562,7 @@ static async ValueTask<object?> AuditAndAuthorizeMutationAsync(EndpointFilterInv
     if (!context.HttpContext.User.HasClaim("role", "admin") && !context.HttpContext.User.HasClaim("role", "owner"))
     {
         await audit.WriteAsync(action, "endpoint", null, "denied", actor, context.HttpContext.RequestAborted);
-        return Results.StatusCode(StatusCodes.Status403Forbidden);
+        return ApiErrors.Forbidden(context.HttpContext);
     }
     try
     {
@@ -544,7 +584,7 @@ static async ValueTask<object?> OwnerAuthorizeAsync(EndpointFilterInvocationCont
     if (context.HttpContext.User.HasClaim("role", "owner")) return await next(context);
     var audit = context.HttpContext.RequestServices.GetRequiredService<AuditService>();
     await audit.WriteAsync($"{context.HttpContext.Request.Method} {context.HttpContext.Request.Path}", "endpoint", null, "denied", context.HttpContext.User.FindFirstValue("uid"), context.HttpContext.RequestAborted);
-    return Results.StatusCode(StatusCodes.Status403Forbidden);
+    return ApiErrors.Forbidden(context.HttpContext);
 }
 
 public partial class Program;

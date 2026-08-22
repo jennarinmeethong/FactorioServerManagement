@@ -1,0 +1,28 @@
+{
+  "attempt": 1,
+  "blockers": [],
+  "effort": "medium",
+  "evidence": [
+    {"outcome": "Save Create posts to the expected endpoint, but redirected stderr is not drained concurrently and creation has no timeout or bounded diagnostic output.", "ref": "src/FactorioManager.Api/ServerSupervisor.cs"},
+    {"outcome": "Current token redaction can leak the token suffix, and the first-run setup code is written to startup logs.", "ref": "src/FactorioManager.Api/Program.cs; src/FactorioManager.Api/ServerSupervisor.cs"},
+    {"outcome": "API error responses are inconsistent and many errors lack a stable actionable body or correlation context.", "ref": "src/FactorioManager.Api/Program.cs; src/FactorioManager.Api/Security.cs"},
+    {"outcome": "The shared frontend action path renders mostly global generic errors, while Save Create does not reliably populate page-local error state.", "ref": "src/FactorioManager.Web/src/App.tsx"},
+    {"outcome": "The logs endpoint returns only the in-memory queue, with weak persisted-log and operation-lifecycle visibility.", "ref": "src/FactorioManager.Api/Program.cs; src/FactorioManager.Api/ServerSupervisor.cs"}
+  ],
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "model": "gpt-5.6-terra",
+  "next_slice": {
+    "read_keys": ["observability-contract", "save-create-flow", "frontend-error-rendering"],
+    "read_paths": ["src/FactorioManager.Api/Program.cs", "src/FactorioManager.Api/ServerSupervisor.cs", "src/FactorioManager.Api/Security.cs", "src/FactorioManager.Web/src/App.tsx", "tests/FactorioManager.Api.Tests"],
+    "summary": "Implement a safe structured error contract and redactor, repair Save Create process capture/timeout/diagnostics, improve unified logs, and add page-local actionable error rendering. Keep secrets out of all responses and logs."
+  },
+  "parent_revision": 1,
+  "required_approval": null,
+  "result": "High-risk defects are concentrated in Save Create process handling, secret-safe logging, inconsistent API errors, and generic frontend error rendering. Route a bounded developer slice covering the four linked implementation areas with focused regression tests.",
+  "role": "architect",
+  "schema_version": 1,
+  "slice_id": "architect-observability-audit",
+  "status": "completed",
+  "task_id": "improve-logs-save-errors"
+}

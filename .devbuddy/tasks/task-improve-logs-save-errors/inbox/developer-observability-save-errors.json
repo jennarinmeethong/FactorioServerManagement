@@ -1,0 +1,28 @@
+{
+  "attempt": 1,
+  "blockers": ["Frontend Vite build was blocked in the specialist environment by EPERM writing existing node_modules temp files; TypeScript noEmit passed."],
+  "effort": "medium",
+  "evidence": [
+    {"outcome": "Added SafeDiagnostics redaction, bounded messages, request ids, stable application/problem+json responses, global exception/status handling, and safer startup logging.", "ref": "src/FactorioManager.Api/SafeDiagnostics.cs; src/FactorioManager.Api/Program.cs"},
+    {"outcome": "Save Create now drains stdout/stderr concurrently, times out, kills a stuck process, bounds diagnostics, validates the generated save, and changes active save only after success.", "ref": "src/FactorioManager.Api/ServerSupervisor.cs"},
+    {"outcome": "Persisted log tail loading, safe download output, aligned SignalR timestamp payloads, and shared redaction for maintenance/server event history were added.", "ref": "src/FactorioManager.Api/ServerSupervisor.cs; src/FactorioManager.Api/MaintenanceHistoryService.cs; src/FactorioManager.Api/ServerEventHistoryService.cs"},
+    {"outcome": "Frontend API parsing now handles JSON/problem details/validation/plain text and renders request ids in visible errors; live log stream failures are surfaced.", "ref": "src/FactorioManager.Web/src/App.tsx"},
+    {"outcome": "Backend tests increased to 53 passing; dotnet build and TypeScript noEmit passed.", "ref": "tests/FactorioManager.Api.Tests/DiagnosticsTests.cs"}
+  ],
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "model": "gpt-5.6-luna",
+  "next_slice": {
+    "read_keys": ["observability-contract", "save-create-flow", "frontend-error-rendering"],
+    "read_paths": ["src/FactorioManager.Api", "src/FactorioManager.Web/src/App.tsx", "tests/FactorioManager.Api.Tests"],
+    "summary": "Independently verify backend tests, frontend build, API error shapes, Save Create behavior, secret redaction, and Docker health. Route any defects back to developer."
+  },
+  "parent_revision": 2,
+  "required_approval": null,
+  "result": "Implemented the bounded observability, Save Create, and page-local error slice. Frontend Vite build remains to be verified in a writable environment.",
+  "role": "developer",
+  "schema_version": 1,
+  "slice_id": "developer-observability-save-errors",
+  "status": "completed",
+  "task_id": "improve-logs-save-errors"
+}

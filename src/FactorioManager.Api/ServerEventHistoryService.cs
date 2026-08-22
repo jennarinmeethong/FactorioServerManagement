@@ -49,10 +49,6 @@ public sealed class ServerEventHistoryService(StateStore state)
     private static string SafeMessage(string? message)
     {
         var value = string.IsNullOrWhiteSpace(message) ? "No additional details." : message.Trim();
-        value = System.Text.RegularExpressions.Regex.Replace(
-            value,
-            "(?i)(password|token|authorization|secret)\\s*[:=]\\s*\\S+",
-            "$1=[redacted]");
-        return value.Length <= 512 ? value : value[..512];
+        return SafeDiagnostics.Redact(value);
     }
 }

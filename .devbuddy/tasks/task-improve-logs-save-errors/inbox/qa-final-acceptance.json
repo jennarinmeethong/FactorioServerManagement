@@ -1,0 +1,30 @@
+{
+  "attempt": 1,
+  "blockers": [
+    "App.tsx still contains ignored async effect calls and a bare catch in Saves.run.",
+    "QA environment could not execute frontend build or Docker daemon checks due permission restrictions; host-side Vite and Docker checks passed separately."
+  ],
+  "effort": "medium",
+  "evidence": [
+    {"outcome": "59 backend tests passed and dotnet build succeeded with zero warnings/errors.", "ref": "tests/FactorioManager.Api.Tests"},
+    {"outcome": "Credential redaction and stable API errors passed focused review.", "ref": "src/FactorioManager.Api/SafeDiagnostics.cs; src/FactorioManager.Api/Program.cs"},
+    {"outcome": "Save Create and logs semantics passed static review.", "ref": "src/FactorioManager.Api/ServerSupervisor.cs"},
+    {"outcome": "Host-side Vite build, Docker image build, healthy container, and HTTP 200 health check passed.", "ref": "src/FactorioManager.Web; Dockerfile; compose.yaml"}
+  ],
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "model": "gpt-5.6-luna",
+  "next_slice": {
+    "read_keys": ["frontend-error-rendering"],
+    "read_paths": ["src/FactorioManager.Web/src/App.tsx"],
+    "summary": "Replace all remaining ignored async effect calls with explicit promise handlers and replace Saves.run bare catch with visible detailed error state; rerun final QA."
+  },
+  "parent_revision": 7,
+  "required_approval": null,
+  "result": "Final QA failed only on remaining frontend async error-handling static findings; backend, host frontend build, and host Docker verification passed.",
+  "role": "qa",
+  "schema_version": 1,
+  "slice_id": "qa-final-acceptance",
+  "status": "failed",
+  "task_id": "improve-logs-save-errors"
+}

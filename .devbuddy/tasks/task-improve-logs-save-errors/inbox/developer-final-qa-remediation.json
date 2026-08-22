@@ -1,0 +1,26 @@
+{
+  "attempt": 1,
+  "blockers": [],
+  "effort": "medium",
+  "evidence": [
+    {"outcome": "Authorization header/query redaction was added with focused secret regression tests.", "ref": "src/FactorioManager.Api/SafeDiagnostics.cs; tests/FactorioManager.Api.Tests/DiagnosticsTests.cs"},
+    {"outcome": "Frontend static scan found no swallowed undefined catches or unresolved then chains; initialization, loading, settings, accounts, maintenance, mods, versions, saves, notifications, and player actions expose failures safely.", "ref": "src/FactorioManager.Web/src/App.tsx"},
+    {"outcome": "59 API tests, API build, TypeScript noEmit, and Vite production build passed.", "ref": "tests/FactorioManager.Api.Tests; src/FactorioManager.Web"}
+  ],
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "model": "gpt-5.6-luna",
+  "next_slice": {
+    "read_keys": ["observability-contract", "frontend-error-rendering"],
+    "read_paths": ["src/FactorioManager.Api/SafeDiagnostics.cs", "src/FactorioManager.Web/src/App.tsx", "tests/FactorioManager.Api.Tests"],
+    "summary": "Rerun independent QA acceptance and complete host Docker verification if available."
+  },
+  "parent_revision": 6,
+  "required_approval": null,
+  "result": "Final QA remediation complete; authorization redaction and frontend promise handling findings are addressed.",
+  "role": "developer",
+  "schema_version": 1,
+  "slice_id": "developer-final-qa-remediation",
+  "status": "completed",
+  "task_id": "improve-logs-save-errors"
+}

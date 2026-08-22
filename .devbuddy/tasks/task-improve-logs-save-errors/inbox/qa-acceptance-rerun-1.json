@@ -1,0 +1,30 @@
+{
+  "attempt": 1,
+  "blockers": [
+    "SafeDiagnostics omits authorization redaction, including query strings.",
+    "App.tsx retains catch(() => undefined) and several ignored user-action promises.",
+    "Docker daemon was unavailable in QA environment."
+  ],
+  "effort": "medium",
+  "evidence": [
+    {"outcome": "56 backend tests passed; dotnet build succeeded with zero warnings/errors.", "ref": "tests/FactorioManager.Api.Tests"},
+    {"outcome": "TypeScript passed; QA environment Vite build was EPERM-blocked, while compose config succeeded.", "ref": "src/FactorioManager.Web; compose.yaml"},
+    {"outcome": "Explicit API error branches, Save Create semantics, and bounded log paths were verified statically.", "ref": "src/FactorioManager.Api/Program.cs; src/FactorioManager.Api/ServerSupervisor.cs"}
+  ],
+  "knowledge_keys": [],
+  "knowledge_proposal": null,
+  "model": "gpt-5.6-luna",
+  "next_slice": {
+    "read_keys": ["observability-contract", "frontend-error-rendering"],
+    "read_paths": ["src/FactorioManager.Api/SafeDiagnostics.cs", "src/FactorioManager.Web/src/App.tsx"],
+    "summary": "Add authorization redaction including query values and remove ignored frontend user-action promises/catches, then rerun QA and host Docker verification."
+  },
+  "parent_revision": 5,
+  "required_approval": null,
+  "result": "Acceptance rerun failed on one redaction class and remaining silently ignored frontend promises; compilation and backend tests passed.",
+  "role": "qa",
+  "schema_version": 1,
+  "slice_id": "qa-acceptance-rerun",
+  "status": "failed",
+  "task_id": "improve-logs-save-errors"
+}

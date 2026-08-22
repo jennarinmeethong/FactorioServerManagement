@@ -13,7 +13,7 @@ public static class CsrfFilter
         var expected = context.HttpContext.User.FindFirst("csrf")?.Value;
         var actual = request.Headers["X-CSRF-Token"].ToString();
         return string.IsNullOrWhiteSpace(expected) || !CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(expected), System.Text.Encoding.UTF8.GetBytes(actual))
-            ? ValueTask.FromResult<object?>(Results.StatusCode(StatusCodes.Status403Forbidden))
+            ? ValueTask.FromResult<object?>(ApiErrors.Forbidden(context.HttpContext, "The request is missing a valid CSRF token. Refresh the page and try again."))
             : next(context);
     }
 }
