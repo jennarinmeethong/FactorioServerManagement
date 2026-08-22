@@ -23,6 +23,7 @@ builder.Services.AddSingleton<AuditService>();
 builder.Services.AddSingleton<ServerSupervisor>();
 builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton<VersionService>();
+builder.Services.AddSingleton<MapControlCatalogService>();
 builder.Services.AddSingleton<MaintenanceHistoryService>();
 builder.Services.AddSingleton<ServerEventHistoryService>();
 builder.Services.AddSingleton<ModService>();
@@ -230,6 +231,11 @@ api.AddEndpointFilter((EndpointFilterInvocationContext context, EndpointFilterDe
     AuditAndAuthorizeMutationAsync(context, next));
 api.MapGet("/status", async (ServerSupervisor supervisor) => Results.Ok(await supervisor.GetStatusAsync()));
 api.MapGet("/settings", async (StateStore state, HttpContext context) => Results.Ok(await state.GetAsync<ServerSettings>("settings", context.RequestAborted)));
+api.MapGet("/map-controls/catalog", async (MapControlCatalogService catalogs, StateStore state, HttpContext context) =>
+{
+    try { return Results.Ok(await catalogs.ResolveForSettingsAsync(await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings(), context.RequestAborted)); }
+    catch (InvalidOperationException e) { return ApiErrors.BadRequest(context, e.Message); }
+});
 api.MapGet("/factorio-credentials/status", async (SecretStore secrets, HttpContext context) =>
 {
     var configured = await secrets.ReadAsync(context.RequestAborted);
@@ -249,7 +255,7 @@ api.MapPut("/factorio-credentials", async (FactorioCredentialsRequest request, S
     await secrets.WriteAsync(new SecretSettings(username, token), context.RequestAborted);
     return Results.NoContent();
 });
-api.MapPut("/settings", async (ServerSettings settings, StateStore state, ServerSupervisor supervisor, HttpContext context) =>
+api.MapPut("/settings", async (ServerSettings settings, StateStore state, ServerSupervisor supervisor, MapControlCatalogService catalogs, HttpContext context) =>
 {
     if (supervisor.IsRunning)
         return ApiErrors.Conflict(context, "Stop the server before changing settings.");
@@ -260,6 +266,13 @@ api.MapPut("/settings", async (ServerSettings settings, StateStore state, Server
     if (!profiles.ContainsKey("vanilla")) profiles["vanilla"] = settings.MapGeneration;
     if (!profiles.ContainsKey("space-age")) profiles["space-age"] = settings.MapGeneration;
     var normalized = settings with { MapGenerationProfiles = profiles };
+    try
+    {
+        var catalog = await catalogs.ResolveForSettingsAsync(normalized, context.RequestAborted);
+        profiles[normalized.Expansion] = MapControlCatalogService.Normalize(profiles[normalized.Expansion], catalog);
+        normalized = normalized with { MapGenerationProfiles = profiles };
+    }
+    catch (InvalidOperationException e) { return ApiErrors.BadRequest(context, e.Message); }
     var validationErrors = ServerSettingsValidator.Validate(normalized);
     if (validationErrors.Count > 0)
         return ApiErrors.Validation(context, validationErrors);

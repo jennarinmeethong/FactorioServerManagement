@@ -39,10 +39,25 @@ public static class MapGenerationSettingsJson
         starting_area = source.StartingArea,
         terrain_segmentation = source.TerrainSegmentation,
         peaceful_mode = source.PeacefulMode,
-        autoplace_controls = new
+        autoplace_controls = new Dictionary<string, object>
         {
-            coal = Resource(source.Coal), stone = Resource(source.Stone), copper_ore = Resource(source.CopperOre), iron_ore = Resource(source.IronOre), uranium_ore = Resource(source.UraniumOre), crude_oil = Resource(source.CrudeOil), trees = new { frequency = source.Trees.Frequency, size = source.Trees.Size }, enemy_base = Resource(source.EnemyBase)
+            ["iron-ore"] = Resource(source.IronOre),
+            ["copper-ore"] = Resource(source.CopperOre),
+            ["stone"] = Resource(source.Stone),
+            ["coal"] = Resource(source.Coal),
+            ["uranium-ore"] = Resource(source.UraniumOre),
+            ["crude-oil"] = Resource(source.CrudeOil),
+            ["trees"] = new { frequency = source.Trees.Frequency, size = source.Trees.Size },
+            ["enemy-base"] = Resource(source.EnemyBase)
         },
+        cliff_settings = new { name = "cliff", cliff_elevation_0 = source.CliffElevationOffset, cliff_elevation_interval = source.CliffElevationInterval, richness = CliffRichness(source.CliffRichness) }
+    }, Options);
+
+    public static string SerializeMapGeneration(MapGenerationSettings source, MapControlCatalog catalog) => JsonSerializer.Serialize(new
+    {
+        seed = source.Seed, width = source.Width, height = source.Height, water = source.Water, starting_area = source.StartingArea,
+        terrain_segmentation = source.TerrainSegmentation, peaceful_mode = source.PeacefulMode,
+        autoplace_controls = catalog.Controls.ToDictionary(x => x.Id, x => (object)Control(source.ControlOverrides.TryGetValue(x.Id, out var value) ? value : new MapControlOverride(), x)),
         cliff_settings = new { name = "cliff", cliff_elevation_0 = source.CliffElevationOffset, cliff_elevation_interval = source.CliffElevationInterval, richness = CliffRichness(source.CliffRichness) }
     }, Options);
 
@@ -54,6 +69,9 @@ public static class MapGenerationSettingsJson
     }, Options);
 
     private static object Resource(ResourceGenerationSettings? value) => new { frequency = value?.Frequency ?? "normal", size = value?.Size ?? "normal", richness = value?.Richness ?? "normal" };
+    private static object Control(MapControlOverride value, MapControlCatalogEntry entry) => entry.Richness
+        ? new { frequency = value.Frequency ?? "normal", size = value.Size ?? "normal", richness = value.Richness ?? "normal" }
+        : new { frequency = value.Frequency ?? "normal", size = value.Size ?? "normal" };
 
     private static double CliffRichness(string value) => value switch
     {

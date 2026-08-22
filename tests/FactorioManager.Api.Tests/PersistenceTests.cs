@@ -424,6 +424,24 @@ public sealed class PersistenceTests : IDisposable
     }
 
     [Fact]
+    public void MapGenerationUsesFactorioAutoplaceControlIdsAndPreservesPayloadPartition()
+    {
+        using var mapGen = JsonDocument.Parse(MapGenerationSettingsJson.SerializeMapGeneration(new MapGenerationSettings()));
+        var controls = mapGen.RootElement.GetProperty("autoplace_controls");
+        var expectedIds = new[] { "iron-ore", "copper-ore", "stone", "coal", "uranium-ore", "crude-oil", "trees", "enemy-base" };
+        var actualIds = controls.EnumerateObject().Select(property => property.Name).OrderBy(name => name).ToArray();
+
+        Assert.Equal(expectedIds.OrderBy(name => name), actualIds);
+        foreach (var invalidId in new[] { "iron_ore", "copper_ore", "uranium_ore", "crude_oil", "enemy_base" })
+            Assert.False(controls.TryGetProperty(invalidId, out _));
+        Assert.False(mapGen.RootElement.TryGetProperty("enemy_evolution", out _));
+
+        using var mapSettings = JsonDocument.Parse(MapGenerationSettingsJson.SerializeMapSettings(new MapGenerationSettings()));
+        Assert.False(mapSettings.RootElement.TryGetProperty("autoplace_controls", out _));
+        Assert.True(mapSettings.RootElement.TryGetProperty("enemy_evolution", out _));
+    }
+
+    [Fact]
     public void SystemHealthReportsPersistentInventory()
     {
         var paths = CreatePaths();
@@ -632,6 +650,51 @@ public sealed class PersistenceTests : IDisposable
 
         var invalid = ServerSettingsValidator.Validate(new ServerSettings(ScheduledRestartEnabled: true, ScheduledRestartTime: "9am"));
         Assert.Contains("scheduledRestartTime", invalid.Keys);
+    }
+
+    [Fact]
+    public async Task MapControlCatalogDiscoversEnabledContentAndFiveSurfaceManifest()
+    {
+        var paths = CreatePaths(); paths.EnsureCreated();
+        var root = Path.Combine(paths.Versions, "2.0.77", "data");
+        Directory.CreateDirectory(Path.Combine(root, "base", "prototypes")); Directory.CreateDirectory(Path.Combine(root, "space-age", "prototypes"));
+        await File.WriteAllTextAsync(Path.Combine(root, "base", "prototypes", "autoplace-controls.lua"), "data:extend({{type=\"autoplace-control\", name=\"iron-ore\", category=\"resource\", richness=true},{type=\"autoplace-control\", name=\"enemy-base\", category=\"enemy\"}})");
+        await File.WriteAllTextAsync(Path.Combine(root, "space-age", "prototypes", "autoplace-controls.lua"), "data:extend({{type=\"autoplace-control\", name=\"scrap\", category=\"resource\", richness=true},{type=\"autoplace-control\", name=\"vulcanus_volcanism\", category=\"terrain\", can_be_disabled=false},{type=\"autoplace-control\", name=\"unknown-control\", category=\"resource\"}})");
+        Directory.CreateDirectory(Path.Combine(paths.Mods)); await File.WriteAllTextAsync(Path.Combine(paths.Mods, "mod-list.json"), "{\"mods\":[{\"name\":\"base\",\"enabled\":true},{\"name\":\"space-age\",\"enabled\":true}]}" );
+        var catalog = await new MapControlCatalogService(paths).ResolveAsync("2.0.77", "space-age");
+        Assert.Equal(["Nauvis", "Vulcanus", "Gleba", "Fulgora", "Aquilo"], catalog.Surfaces);
+        Assert.Equal(["enemy-base", "iron-ore", "vulcanus_volcanism", "scrap"], catalog.Controls.Select(x => x.Id));
+        Assert.Equal("Fulgora", catalog.Controls.Single(x => x.Id == "scrap").Surface);
+        Assert.False(catalog.Controls.Single(x => x.Id == "vulcanus_volcanism").CanBeDisabled);
+    }
+
+    [Fact]
+    public async Task MapControlCatalogExcludesManifestNamesFromNonControlTables()
+    {
+        var paths = CreatePaths(); paths.EnsureCreated();
+        var root = Path.Combine(paths.Versions, "2.0.77", "data", "base", "prototypes");
+        Directory.CreateDirectory(root);
+        await File.WriteAllTextAsync(Path.Combine(root, "autoplace-controls.lua"),
+            "data:extend({{type=\"resource\", name=\"iron-ore\", category=\"resource\"}})");
+
+        var catalog = await new MapControlCatalogService(paths).ResolveAsync("2.0.77", "vanilla");
+
+        Assert.DoesNotContain(catalog.Controls, control => control.Id == "iron-ore");
+    }
+
+    [Fact]
+    public void CatalogSerializationOmitsUnknownControlsAndKeepsMapSettingsSeparate()
+    {
+        var catalog = new MapControlCatalog("2.0.77", "fingerprint", MapControlCatalogService.SupportedSurfaces, [new("iron-ore", "Nauvis", "resource", true, true)]);
+        var map = new MapGenerationSettings { ControlOverrides = new Dictionary<string, MapControlOverride> { ["iron-ore"] = new("high", "low", "normal"), ["disabled-mod-control"] = new("high", "high", "high") } };
+        using var gen = JsonDocument.Parse(MapGenerationSettingsJson.SerializeMapGeneration(MapControlCatalogService.Normalize(map, catalog), catalog));
+        using var runtime = JsonDocument.Parse(MapGenerationSettingsJson.SerializeMapSettings(map));
+        var normalized = MapControlCatalogService.Normalize(map, catalog);
+        Assert.DoesNotContain("disabled-mod-control", normalized.ControlOverrides.Keys);
+        Assert.True(gen.RootElement.GetProperty("autoplace_controls").TryGetProperty("iron-ore", out _));
+        Assert.False(gen.RootElement.GetProperty("autoplace_controls").TryGetProperty("disabled-mod-control", out _));
+        Assert.False(runtime.RootElement.TryGetProperty("autoplace_controls", out _));
+        Assert.True(runtime.RootElement.TryGetProperty("enemy_evolution", out _));
     }
 
     [Fact]

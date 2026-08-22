@@ -40,6 +40,7 @@ public sealed record MapGenerationSettings
     public int CliffElevationInterval { get; init; } = 40;
     public int CliffElevationOffset { get; init; }
     public string CliffRichness { get; init; } = "normal";
+    public Dictionary<string, MapControlOverride> ControlOverrides { get; init; } = new(StringComparer.Ordinal);
 }
 
 public sealed record ServerSettings(

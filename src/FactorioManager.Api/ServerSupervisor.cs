@@ -13,8 +13,10 @@ public sealed class ServerSupervisor(
     IHubContext<StatusHub> hub,
     ILogger<ServerSupervisor> logger,
     ServerEventHistoryService? eventHistory = null,
-    NotificationService? notifications = null)
+    NotificationService? notifications = null,
+    MapControlCatalogService? catalogs = null)
 {
+    private readonly MapControlCatalogService? _catalogs = catalogs;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly ConcurrentQueue<string> _recentLogs = new();
     private readonly ConcurrentDictionary<Process, bool> _manualStopRequests = new();
@@ -289,9 +291,12 @@ public sealed class ServerSupervisor(
         await File.WriteAllTextAsync(Path.Combine(paths.Mods, "mod-list.json"), JsonSerializer.Serialize(new { mods = entries }), cancellationToken);
     }
 
-    private static async Task WriteMapGenerationSettingsAsync(MapGenerationSettings source, string path, CancellationToken cancellationToken)
+    private async Task WriteMapGenerationSettingsAsync(MapGenerationSettings source, string path, CancellationToken cancellationToken)
     {
-        await File.WriteAllTextAsync(path, MapGenerationSettingsJson.SerializeMapGeneration(source), cancellationToken);
+        if (_catalogs is null) throw new InvalidOperationException("Map-control catalog service is unavailable.");
+        var settings = await store.GetAsync<ServerSettings>("settings", cancellationToken) ?? new ServerSettings();
+        var catalog = await _catalogs.ResolveForSettingsAsync(settings, cancellationToken);
+        await File.WriteAllTextAsync(path, MapGenerationSettingsJson.SerializeMapGeneration(MapControlCatalogService.Normalize(source, catalog), catalog), cancellationToken);
     }
 
     private string GetExecutable(string version) => Path.Combine(paths.Versions, version, "bin", "x64", "factorio");
