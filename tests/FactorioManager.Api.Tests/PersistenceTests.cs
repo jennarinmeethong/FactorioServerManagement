@@ -44,6 +44,23 @@ public sealed class PersistenceTests : IDisposable
     }
 
     [Fact]
+    public async Task SetupCodePersistsAcrossServiceInstancesAndIsDeletedAfterSetup()
+    {
+        var paths = CreatePaths();
+        var store = new StateStore(paths);
+        await store.InitializeAsync(CancellationToken.None);
+
+        var first = new SetupCodeService(store);
+        var code = first.Code;
+        Assert.Equal(code, await File.ReadAllTextAsync(paths.SetupCode));
+
+        var restarted = new SetupCodeService(store);
+        Assert.Equal(code, restarted.Code);
+        Assert.True(await restarted.TryConfigureAsync(code, "this-is-a-safe-password"));
+        Assert.False(File.Exists(paths.SetupCode));
+    }
+
+    [Fact]
     public async Task FreshSetupCreatesAdminAsOwner()
     {
         var store = await CreateStoreAsync();
@@ -436,9 +453,18 @@ public sealed class PersistenceTests : IDisposable
             Assert.False(controls.TryGetProperty(invalidId, out _));
         Assert.False(mapGen.RootElement.TryGetProperty("enemy_evolution", out _));
 
-        using var mapSettings = JsonDocument.Parse(MapGenerationSettingsJson.SerializeMapSettings(new MapGenerationSettings()));
+        using var mapSettings = JsonDocument.Parse(MapGenerationSettingsJson.SerializeMapSettings(new MapGenerationSettings { EvolutionPollution = 100 }));
         Assert.False(mapSettings.RootElement.TryGetProperty("autoplace_controls", out _));
+        Assert.True(mapSettings.RootElement.TryGetProperty("difficulty_settings", out _));
+        Assert.True(mapSettings.RootElement.TryGetProperty("pollution", out _));
         Assert.True(mapSettings.RootElement.TryGetProperty("enemy_evolution", out _));
+        Assert.True(mapSettings.RootElement.TryGetProperty("enemy_expansion", out _));
+        Assert.True(mapSettings.RootElement.TryGetProperty("unit_group", out _));
+        Assert.True(mapSettings.RootElement.TryGetProperty("path_finder", out _));
+        Assert.True(mapSettings.RootElement.TryGetProperty("asteroids", out _));
+        Assert.True(mapSettings.RootElement.TryGetProperty("max_failed_behavior_count", out _));
+        Assert.Equal(0.0000009, mapSettings.RootElement.GetProperty("enemy_evolution").GetProperty("pollution_factor").GetDouble());
+        Assert.Equal(15, mapSettings.RootElement.GetProperty("pollution").GetProperty("min_to_diffuse").GetInt32());
     }
 
     [Fact]

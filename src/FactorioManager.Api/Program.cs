@@ -93,7 +93,10 @@ await app.Services.GetRequiredService<AccountService>().EnsureInitialOwnerAsync(
 await app.Services.GetRequiredService<ModService>().InitializeAsync(app.Lifetime.ApplicationStopping);
 var setup = app.Services.GetRequiredService<SetupCodeService>();
 if (!await setup.IsConfiguredAsync(app.Lifetime.ApplicationStopping))
-    app.Logger.LogWarning("Factorio Manager first-run setup is pending; use the configured setup-code channel to complete setup.");
+{
+    _ = setup.Code;
+    app.Logger.LogWarning("Factorio Manager first-run setup is pending; read the setup code from {SetupCodePath} and complete setup at /.", setup.SetupCodePath);
+}
 
 app.Use(async (context, next) =>
 {

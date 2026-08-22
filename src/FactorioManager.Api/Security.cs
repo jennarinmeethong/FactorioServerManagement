@@ -52,7 +52,60 @@ public static class ApiMutationAuthorizationFilter
 
 public sealed class SetupCodeService(StateStore state)
 {
-    public string Code { get; } = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6));
+    private readonly object _codeLock = new();
+    private string? _code;
+
+    public string SetupCodePath => state.Paths.SetupCode;
+
+    /// <summary>
+    /// Returns the setup code, reusing the pending code across restarts. The
+    /// file is readable only by the application user on Unix hosts and is
+    /// deleted after setup succeeds.
+    /// </summary>
+    public string Code
+    {
+        get
+        {
+            lock (_codeLock)
+            {
+                if (_code is not null) return _code;
+
+                state.Paths.EnsureCreated();
+                if (File.Exists(SetupCodePath))
+                {
+                    var persisted = File.ReadAllText(SetupCodePath).Trim();
+                    if (IsValidCode(persisted))
+                    {
+                        _code = persisted;
+                        return _code;
+                    }
+                }
+
+                _code = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6));
+                var temporaryPath = SetupCodePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128, FileOptions.WriteThrough))
+                    using (var writer = new StreamWriter(stream))
+                    {
+                        writer.Write(_code);
+                        writer.Flush();
+                        stream.Flush(true);
+                    }
+
+                    File.Move(temporaryPath, SetupCodePath, true);
+                    if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+                        File.SetUnixFileMode(SetupCodePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                }
+                finally
+                {
+                    if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+                }
+
+                return _code;
+            }
+        }
+    }
 
     public async Task<bool> IsConfiguredAsync(CancellationToken cancellationToken = default) =>
         await state.GetAsync<string>("admin_password", cancellationToken) is not null;
@@ -62,7 +115,20 @@ public sealed class SetupCodeService(StateStore state)
         if (await IsConfiguredAsync(cancellationToken) || !string.Equals(code, Code, StringComparison.Ordinal) || password.Length < 8)
             return false;
         await state.SetAsync("admin_password", BCrypt.Net.BCrypt.HashPassword(password), cancellationToken);
+        TryDeleteSetupCode();
         return true;
+    }
+
+    private static bool IsValidCode(string value) => value.Length == 12 && value.All(Uri.IsHexDigit);
+
+    private void TryDeleteSetupCode()
+    {
+        try
+        {
+            if (File.Exists(SetupCodePath)) File.Delete(SetupCodePath);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     public async Task<bool> VerifyPasswordAsync(string password, CancellationToken cancellationToken = default)

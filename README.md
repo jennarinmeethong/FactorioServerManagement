@@ -11,7 +11,13 @@ docker compose up --build -d
 docker compose logs factorio-manager
 ```
 
-Copy the **first-run setup code** from the logs, then open [http://localhost:8080](http://localhost:8080). The first-run page uses that code once to create the admin account and optionally save the Factorio username/token needed to download headless server versions and install Mod Portal content.
+Read the **first-run setup code** from the mounted data directory, then open [http://localhost:8080](http://localhost:8080):
+
+```sh
+docker compose exec factorio-manager cat /data/setup-code
+```
+
+The code is persisted until setup succeeds, so restarting the container does not invalidate it. The setup-code file is deleted after the admin account is created. The first-run page uses the code once to create the admin account and optionally save the Factorio username/token needed to download headless server versions and install Mod Portal content.
 
 The default compose mapping deliberately binds the dashboard to localhost. To use it on a private LAN, replace `127.0.0.1:8080:8080` with `8080:8080`, restrict it with a host firewall, and use a reverse proxy with TLS before exposing it to the internet.
 

@@ -7,6 +7,8 @@ public sealed class StateStore(DataPaths paths)
 {
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web);
 
+    public DataPaths Paths => paths;
+
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
         paths.EnsureCreated();

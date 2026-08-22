@@ -18,6 +18,7 @@ public sealed class DataPaths
     public string Config => Path.Combine(Root, "config");
     public string Logs => Path.Combine(Root, "logs");
     public string Database => Path.Combine(Root, "app.db");
+    public string SetupCode => Path.Combine(Root, "setup-code");
     public string Secrets => Path.Combine(Config, "secrets.json");
 
     public void EnsureCreated()
