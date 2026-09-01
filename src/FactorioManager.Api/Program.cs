@@ -274,7 +274,15 @@ api.MapPut("/mod-settings", async (HttpRequest http, ModSettingsService service,
 }).AddEndpointFilter(CsrfFilter.Validate);
 api.MapGet("/map-controls/catalog", async (MapControlCatalogService catalogs, StateStore state, HttpContext context) =>
 {
-    try { return Results.Ok(await catalogs.ResolveForSettingsAsync(await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings(), context.RequestAborted)); }
+    var requestedExpansion = context.Request.Query["expansion"].ToString();
+    if (!string.IsNullOrWhiteSpace(requestedExpansion) && requestedExpansion is not ("vanilla" or "space-age"))
+        return ApiErrors.BadRequest(context, "The map-control catalog expansion is invalid.");
+    try
+    {
+        var settings = await state.GetAsync<ServerSettings>("settings", context.RequestAborted) ?? new ServerSettings();
+        if (!string.IsNullOrWhiteSpace(requestedExpansion)) settings = settings with { Expansion = requestedExpansion };
+        return Results.Ok(await catalogs.ResolveForSettingsAsync(settings, context.RequestAborted));
+    }
     catch (InvalidOperationException e) { return ApiErrors.BadRequest(context, e.Message); }
 });
 api.MapGet("/factorio-credentials/status", async (SecretStore secrets, HttpContext context) =>

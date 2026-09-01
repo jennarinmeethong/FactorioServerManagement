@@ -21,6 +21,8 @@ public static class MapGenerationSettingsValidator
         if (map.SettlerGroupMinSize < 1 || map.SettlerGroupMaxSize < map.SettlerGroupMinSize) errors.Add("Settler group sizes are invalid.");
         if (map.ExpansionMinCooldown < 1 || map.ExpansionMaxCooldown < map.ExpansionMinCooldown) errors.Add("Enemy expansion cooldowns are invalid.");
         if (map.CliffElevationInterval < 1) errors.Add("Cliff elevation interval must be positive.");
+        if (map.TechnologyPriceMultiplier is <= 0 or > 1000) errors.Add("Technology price multiplier must be between 0 and 1000.");
+        if (map.SpoilTimeModifier is <= 0 or > 1000) errors.Add("Spoil time modifier must be between 0 and 1000.");
         return errors;
     }
 }
@@ -64,7 +66,7 @@ public static class MapGenerationSettingsJson
     /// <summary>Returns a complete Factorio --map-settings file, preserving the map controls exposed by this manager.</summary>
     public static string SerializeMapSettings(MapGenerationSettings source) => JsonSerializer.Serialize(new
     {
-        difficulty_settings = new { technology_price_multiplier = 1, spoil_time_modifier = 1 },
+        difficulty_settings = new { technology_price_multiplier = source.TechnologyPriceMultiplier, spoil_time_modifier = source.SpoilTimeModifier },
         pollution = new
         {
             enabled = true,
